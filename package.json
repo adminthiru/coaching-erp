@@ -1,0 +1,28 @@
+{
+  "name": "acadia-erp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NEET & JEE Coaching Centre SaaS ERP \u2014 multi-tenant, multi-branch platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @acadia/api",
+    "dev:super-admin": "npm run dev -w @acadia/super-admin",
+    "dev:erp": "npm run dev -w @acadia/erp",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:generate": "npm run db:generate -w @acadia/api",
+    "db:migrate": "npm run db:migrate -w @acadia/api",
+    "db:seed": "npm run db:seed -w @acadia/api",
+    "db:studio": "npm run db:studio -w @acadia/api",
+    "db:seed:demo": "npm run db:seed:demo -w @acadia/api"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

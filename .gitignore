@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+
+# Environment — never commit credentials
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
+npm-debug.log*
+tsconfig.tsbuildinfo
+next-env.d.ts
+coverage/

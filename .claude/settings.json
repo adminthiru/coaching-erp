@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm -v)",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"root: %{http_code} -> %{redirect_url}\\\\n\" http://localhost:3000/)",
+      "Bash(curl -s http://localhost:3000/students -o /tmp/students.html -w \"students: %{http_code} size=%{size_download}\\\\n\")",
+      "Read(//private/tmp/**)",
+      "Bash(curl -s \"http://localhost:3000/_next/static/css/app/layout.css\" -o /tmp/layout.css -w \"css: %{http_code} size=%{size_download}\\\\n\")",
+      "Read(//tmp/**)",
+      "Bash(curl -s -o /dev/null -m 3 -w \"%{http_code}\\\\n\" http://localhost:3000/students)",
+      "Bash(python3 -c ' *)",
+      "Bash(grep -oE '\\(Section|title|label|eyebrow\\)[:=] *\"[^\"]{2,60}\"' \"Design System.dc.html\")",
+      "Bash(sort -u -t: -k2)",
+      "Bash(python3 -m http.server 4000 --bind 127.0.0.1)",
+      "Bash(curl -s -o /dev/null -m 5 -w \"dc.html: %{http_code} size=%{size_download}\\\\n\" \"http://127.0.0.1:4000/Design%20System.dc.html\")",
+      "Bash(curl -s -o /dev/null -m 5 -w \"support.js: %{http_code} size=%{size_download}\\\\n\" \"http://127.0.0.1:4000/support.js\")",
+      "Bash(curl -s -o /dev/null -m 8 -w \"unpkg react: %{http_code}\\\\n\" https://unpkg.com/react@18.3.1/umd/react.production.min.js)",
+      "Bash(pnpm -v)",
+      "Bash(export PGCONNECT_TIMEOUT=15)",
+      "Bash(psql \"postgresql://neondb_owner:npg_rFo6Gqi8jvsI@ep-crimson-shape-auxlhtz0.c-10.us-east-1.aws.neon.tech/neondb?sslmode=require\" -c \"select version\\(\\);\" -c \"select current_database\\(\\), current_user;\")",
+      "Bash(psql \"postgresql://neondb_owner:npg_rFo6Gqi8jvsI@ep-crimson-shape-auxlhtz0.c-10.us-east-1.aws.neon.tech/neondb?sslmode=require\" -c \"\\\\dt\" -c \"select schema_name from information_schema.schemata where schema_name not like 'pg_%' and schema_name!='information_schema';\")",
+      "Bash(node -e ' *)",
+      "Bash(cp -R __TRACKED_VAR__/components packages/ui/src/components)",
+      "Bash(cp -R __TRACKED_VAR__/lib packages/ui/src/lib)",
+      "Bash(cp -R __TRACKED_VAR__/styles packages/ui/src/styles)",
+      "Bash(cp __TRACKED_VAR__/tailwind.config.ts packages/ui/tailwind.preset.ts)",
+      "Bash(perl -pi -e 's{Omit<React\\\\.InputHTMLAttributes<HTMLInputElement>, \"size\">}{Omit<React.InputHTMLAttributes<HTMLInputElement>, \"size\" | \"prefix\">}' components/ui/input.tsx)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(perl -pi -e 's/\"lib\": \\\\[\"esnext\"\\\\]/\"lib\": [\"esnext\", \"dom\"]/' tsconfig.json)",
+      "Bash(npx prisma *)",
+      "Bash(ln -sf ../../.env .env)",
+      "Bash(python3 -)"
+    ]
+  }
+}

@@ -1,0 +1,2757 @@
+// NEET & JEE Coaching Centre SaaS ERP — Phase 0 (Platform / Super Admin) + the
+// Organization & Branch spine that Phase 1 builds on.
+//
+// Conventions, applied without exception:
+//   - Money is an Int count of the minor unit (paise). Never Float, never Decimal-as-float.
+//   - Nothing financial or historical is ever deleted; rows are voided or archived.
+//   - Every tenant-owned row carries organizationId; every branch-scoped row also
+//     carries branchId. Both are indexed because every query filters on them.
+//   - Enums mirror packages/types/src/index.ts by name. Change both together.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/* ───────────────────────── Platform (Super Admin) ───────────────────────── */
+
+enum PlatformRole {
+  PLATFORM_OWNER
+  PLATFORM_ADMIN
+  FINANCE_ADMIN
+  SUPPORT_ADMIN
+  READONLY_ADMIN
+}
+
+model PlatformUser {
+  id           String       @id @default(uuid()) @db.Uuid
+  name         String       @db.VarChar(120)
+  email        String       @unique @db.VarChar(180)
+  phone        String?      @db.VarChar(20)
+  passwordHash String
+  role         PlatformRole
+  isActive     Boolean      @default(true)
+
+  // MFA-ready architecture (spec §9): the columns exist so enabling TOTP is a
+  // feature flag rather than a migration.
+  mfaEnabled Boolean @default(false)
+  mfaSecret  String?
+
+  lastLoginAt         DateTime?
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  sessions       PlatformSession[]
+  resetTokens    PasswordResetToken[]
+  assignedTicket SupportTicket[]      @relation("TicketAssignee")
+  ticketNotes    TicketNote[]
+
+  @@index([role])
+  @@index([deletedAt])
+  @@map("platform_users")
+}
+
+/// One row per signed-in device. Refresh tokens are stored hashed so a database
+/// leak cannot be replayed. Spec §9 (device/session management).
+model PlatformSession {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @db.Uuid
+  refreshTokenHash String   @unique
+  userAgent        String?  @db.VarChar(400)
+  ipAddress        String?  @db.VarChar(64)
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  lastUsedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  user PlatformUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("platform_sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user PlatformUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+/* ──────────────────────────── Plans & billing ───────────────────────────── */
+
+enum PlanStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+/// Spec §13. Plans are data, not code — limits live in a JSON map keyed by
+/// LimitKey, where a null value means unlimited.
+model Plan {
+  id          String     @id @default(uuid()) @db.Uuid
+  name        String     @db.VarChar(60)
+  slug        String     @unique @db.VarChar(63)
+  description String?    @db.VarChar(400)
+  currency    String     @default("INR") @db.Char(3)
+
+  monthlyPriceMinor Int @default(0)
+  annualPriceMinor  Int @default(0)
+  trialDays         Int @default(14)
+
+  /// Feature keys from the Feature enum in @acadia/types.
+  features String[] @default([])
+  /// { "students": 2000, "branches": 5, "storage_mb": null }
+  limits   Json     @default("{}")
+
+  status    PlanStatus @default(DRAFT)
+  sortOrder Int        @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+  invoices      Invoice[]
+  coupons       CouponPlan[]
+  flagPlans     FeatureFlagPlan[]
+
+  @@index([status, sortOrder])
+  @@map("plans")
+}
+
+enum CouponType {
+  PERCENTAGE
+  FIXED
+  TRIAL_EXTENSION
+}
+
+enum CouponDuration {
+  ONE_TIME
+  FIRST_PAYMENT
+  RECURRING
+}
+
+/// Spec §18. `redemptionCount` is incremented inside the same transaction that
+/// writes the redemption row, so usage can never overflow `maxRedemptions`.
+model Coupon {
+  id          String         @id @default(uuid()) @db.Uuid
+  code        String         @unique @db.VarChar(24)
+  description String?        @db.VarChar(240)
+  type        CouponType
+  duration    CouponDuration @default(ONE_TIME)
+  /// Percent for PERCENTAGE, minor units for FIXED, whole days for TRIAL_EXTENSION.
+  value       Int
+
+  maxRedemptions  Int?
+  redemptionCount Int  @default(0)
+
+  validFrom  DateTime?
+  validUntil DateTime?
+  isActive   Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Empty means every plan.
+  plans         CouponPlan[]
+  redemptions   CouponRedemption[]
+  subscriptions Subscription[]
+
+  @@index([isActive, validUntil])
+  @@map("coupons")
+}
+
+model CouponPlan {
+  couponId String @db.Uuid
+  planId   String @db.Uuid
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  plan   Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, planId])
+  @@map("coupon_plans")
+}
+
+model CouponRedemption {
+  id             String   @id @default(uuid()) @db.Uuid
+  couponId       String   @db.Uuid
+  organizationId String   @db.Uuid
+  subscriptionId String?  @db.Uuid
+  discountMinor  Int      @default(0)
+  redeemedAt     DateTime @default(now())
+
+  coupon       Coupon        @relation(fields: [couponId], references: [id])
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  /// A given organization may redeem a given coupon once.
+  @@unique([couponId, organizationId])
+  @@index([organizationId])
+  @@map("coupon_redemptions")
+}
+
+/* ──────────────────────────── Organizations ─────────────────────────────── */
+
+enum OrganizationStatus {
+  TRIAL
+  ACTIVE
+  PAYMENT_DUE
+  SUSPENDED
+  CANCELLED
+  EXPIRED
+  ARCHIVED
+}
+
+/// The tenant root. Everything the ERP owns hangs off this row.
+model Organization {
+  id     String             @id @default(uuid()) @db.Uuid
+  name   String             @db.VarChar(140)
+  slug   String             @unique @db.VarChar(63)
+  status OrganizationStatus @default(TRIAL)
+
+  ownerName  String @db.VarChar(120)
+  ownerEmail String @db.VarChar(180)
+  ownerPhone String @db.VarChar(20)
+
+  website     String? @db.VarChar(200)
+  email       String? @db.VarChar(180)
+  phone       String? @db.VarChar(20)
+  logoUrl     String? @db.VarChar(400)
+  addressLine String? @db.VarChar(200)
+  city        String? @db.VarChar(80)
+  state       String? @db.VarChar(80)
+  country     String  @default("India") @db.VarChar(60)
+  pincode     String? @db.VarChar(12)
+  timezone    String  @default("Asia/Kolkata") @db.VarChar(60)
+
+  trialEndsAt DateTime?
+
+  /// Super Admin overrides that outrank the plan (spec §15, §81).
+  /// Same shape as Plan.limits; keys present here win.
+  limitOverrides   Json     @default("{}")
+  /// Feature keys granted on top of the plan's entitlements.
+  featureOverrides String[] @default([])
+
+  lastActiveAt DateTime?
+  suspendedAt  DateTime?
+  archivedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branches      Branch[]
+  users         OrgUser[]
+  subscriptions Subscription[]
+  invoices      Invoice[]
+  payments      Payment[]
+  trialEvents   TrialEvent[]
+  redemptions   CouponRedemption[]
+  tickets       SupportTicket[]
+  auditLogs     AuditLog[]
+  usage          OrganizationUsage?
+  flagOrgs       FeatureFlagOrganization[]
+  transfers      BranchTransfer[]
+  courses        Course[]
+  subjects       Subject[]
+  academicYears  AcademicYear[]
+  batches        Batch[]
+  students       Student[]
+  enquiries      Enquiry[]
+  chapters       Chapter[]
+  topics         Topic[]
+  syllabus       SyllabusProgress[]
+  lessonPlans    LessonPlan[]
+  rooms          Room[]
+  timetableSlots TimetableSlot[]
+  classSessions  ClassSession[]
+  attendance     Attendance[]
+  leaveRequests  LeaveRequest[]
+  announcements  Announcement[]
+  questions      Question[]
+  tests          Test[]
+  testAttempts   TestAttempt[]
+  homework       Homework[]
+  homeworkSubmissions HomeworkSubmission[]
+  studyMaterials StudyMaterial[]
+  doubts         Doubt[]
+  feeStructures  FeeStructure[]
+  studentFees    StudentFee[]
+  feePayments    FeePayment[]
+  expenses       Expense[]
+  guardians      Guardian[]
+  hostels        Hostel[]
+  hostelAllocations HostelAllocation[]
+  vehicles       Vehicle[]
+  transportRoutes TransportRoute[]
+  transportAllocations TransportAllocation[]
+  messPlans      MessPlan[]
+  messSubscriptions MessSubscription[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([trialEndsAt])
+  @@map("organizations")
+}
+
+/// Live counters for quota checks. Kept as a row rather than recomputed with
+/// COUNT(*) on every request — branch creation checks this on the hot path.
+/// Reconciled by a scheduled job; see UsageService.recalculate().
+model OrganizationUsage {
+  organizationId String @id @db.Uuid
+
+  branches   Int @default(0)
+  students   Int @default(0)
+  faculty    Int @default(0)
+  adminUsers Int @default(0)
+  storageMb  Int @default(0)
+  messages   Int @default(0)
+  tests      Int @default(0)
+  questions  Int @default(0)
+
+  recalculatedAt DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("organization_usage")
+}
+
+enum BranchStatus {
+  SETUP_REQUIRED
+  ACTIVE
+  TEMPORARILY_CLOSED
+  SUSPENDED
+  ARCHIVED
+}
+
+/// Spec §27. Branch is a first-class scope boundary, never a display field.
+model Branch {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String       @db.VarChar(140)
+  code           String       @db.VarChar(24)
+  status         BranchStatus @default(SETUP_REQUIRED)
+
+  addressLine String? @db.VarChar(200)
+  city        String  @db.VarChar(80)
+  state       String  @db.VarChar(80)
+  country     String  @default("India") @db.VarChar(60)
+  pincode     String? @db.VarChar(12)
+  phone       String? @db.VarChar(20)
+  email       String? @db.VarChar(180)
+  timezone    String  @default("Asia/Kolkata") @db.VarChar(60)
+  /// ISO-8601 weekday numbers, 1 = Monday.
+  workingDays Int[]   @default([1, 2, 3, 4, 5, 6])
+
+  openedAt   DateTime?
+  closedAt   DateTime?
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members        BranchUser[]
+  transfersFrom  BranchTransfer[]       @relation("TransferFrom")
+  transfersTo    BranchTransfer[]       @relation("TransferTo")
+  batches        Batch[]
+  students       Student[]
+  studentHistory StudentBranchHistory[]
+  enquiries      Enquiry[]
+  syllabus       SyllabusProgress[]
+  lessonPlans    LessonPlan[]
+  rooms          Room[]
+  timetableSlots TimetableSlot[]
+  classSessions  ClassSession[]
+  attendance     Attendance[]
+  leaveRequests  LeaveRequest[]
+  announcementTargets AnnouncementTarget[]
+  questions      Question[]
+  tests          TestBranch[]
+  testAttempts   TestAttempt[]
+  homeworkTargets HomeworkTarget[]
+  homeworkSubmissions HomeworkSubmission[]
+  studyMaterialTargets StudyMaterialTarget[]
+  doubts         Doubt[]
+  feeStructures  FeeStructure[]
+  studentFees    StudentFee[]
+  feePayments    FeePayment[]
+  expenses       Expense[]
+  hostels        Hostel[]
+  vehicles       Vehicle[]
+  transportRoutes TransportRoute[]
+  messPlans      MessPlan[]
+
+  /// Branch codes and names are unique inside an organization, not globally —
+  /// two different academies may both have a "CHENNAI" branch. Spec §37.
+  @@unique([organizationId, code])
+  @@unique([organizationId, name])
+  @@index([organizationId, status])
+  @@map("branches")
+}
+
+enum OrgRole {
+  ORG_OWNER
+  ORG_ADMIN
+  BRANCH_ADMIN
+  FACULTY
+  COUNSELLOR
+  ACCOUNTANT
+  STUDENT
+  PARENT
+}
+
+/// A person inside a tenant. Branch access is expressed through BranchUser, not
+/// a single branchId column, because faculty legitimately span branches (§40).
+model OrgUser {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  name           String  @db.VarChar(120)
+  email          String  @db.VarChar(180)
+  phone          String? @db.VarChar(20)
+  employeeId     String? @db.VarChar(40)
+  passwordHash   String?
+  role           OrgRole
+  isActive       Boolean @default(true)
+
+  /// Set until the invited user accepts. Spec §37 (invitation not accepted).
+  invitedAt        DateTime?
+  invitationToken  String?   @unique
+  invitationExpiry DateTime?
+  acceptedAt       DateTime?
+  lastLoginAt      DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  organization    Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branches        BranchUser[]
+  sessions        OrgSession[]
+  resetTokens     OrgPasswordResetToken[]
+  batchAssignments  BatchFaculty[]
+  assignedEnquiries Enquiry[]            @relation("EnquiryAssignee")
+  syllabusProgress  SyllabusProgress[]
+  lessonPlans       LessonPlan[]
+  timetableSlots    TimetableSlot[]
+  classSessions     ClassSession[]
+  attendanceMarked  Attendance[]
+  leaveRequests     LeaveRequest[]       @relation("LeaveFaculty")
+  leaveReviews      LeaveRequest[]       @relation("LeaveReviewer")
+  announcements     Announcement[]
+  questions         Question[]
+  tests             Test[]
+  homeworkCreated   Homework[]
+  homeworkGraded    HomeworkSubmission[]  @relation("HomeworkGrader")
+  studyMaterialsCreated StudyMaterial[]
+  doubtsAssigned    Doubt[]               @relation("DoubtAssignee")
+  doubtsRaised      Doubt[]               @relation("DoubtRaiser")
+  doubtMessages     DoubtMessage[]        @relation("DoubtMessageAuthor")
+  concessionsGranted FeeConcession[]      @relation("ConcessionGrantedBy")
+  feesCollected     FeePayment[]          @relation("FeeCollectedBy")
+  feeRefunds        FeeRefund[]           @relation("FeeRefundedBy")
+  expensesRecorded  Expense[]             @relation("ExpenseRecordedBy")
+  expensesApproved  Expense[]             @relation("ExpenseApprovedBy")
+  guardianOf        Guardian[]            @relation("GuardianUser")
+  studentProfile    Student?              @relation("StudentPortalUser")
+
+  @@unique([organizationId, email])
+  @@index([organizationId, role])
+  @@map("org_users")
+}
+
+/// Tenant-side session. Deliberately a separate table from PlatformSession: a
+/// platform token must never authenticate into a tenant, or the reverse.
+model OrgSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  refreshTokenHash String    @unique
+  /// The branch the user is currently operating in. Re-validated on every
+  /// request — never trusted from the client (spec §76).
+  activeBranchId   String?   @db.Uuid
+  userAgent        String?   @db.VarChar(400)
+  ipAddress        String?   @db.VarChar(64)
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  lastUsedAt       DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+
+  user OrgUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("org_sessions")
+}
+
+model OrgPasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user OrgUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("org_password_reset_tokens")
+}
+
+/// Branch assignment. `isPrimary` marks the operational home branch; a user may
+/// hold several assignments (multi-branch faculty, org admins).
+model BranchUser {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  branchId   String   @db.Uuid
+  isPrimary  Boolean  @default(false)
+  assignedAt DateTime @default(now())
+  endedAt    DateTime?
+
+  user   OrgUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, branchId])
+  @@index([branchId, endedAt])
+  @@map("branch_users")
+}
+
+/* ────────────────────────── Subscriptions ───────────────────────────────── */
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  RENEWAL
+  PAYMENT_DUE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+model Subscription {
+  id             String             @id @default(uuid()) @db.Uuid
+  organizationId String             @db.Uuid
+  planId         String             @db.Uuid
+  status         SubscriptionStatus @default(TRIAL)
+  billingCycle   BillingCycle       @default(MONTHLY)
+
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  trialEndsAt        DateTime?
+
+  cancelAtPeriodEnd Boolean   @default(false)
+  cancelledAt       DateTime?
+  cancelReason      String?   @db.VarChar(400)
+  endedAt           DateTime?
+
+  couponId String? @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan               @relation(fields: [planId], references: [id])
+  coupon       Coupon?            @relation(fields: [couponId], references: [id])
+  events       SubscriptionEvent[]
+  invoices     Invoice[]
+  redemptions  CouponRedemption[]
+
+  @@index([organizationId, status])
+  @@index([status, currentPeriodEnd])
+  @@map("subscriptions")
+}
+
+/// Append-only lifecycle log. Spec §19: never delete subscription history.
+model SubscriptionEvent {
+  id             String              @id @default(uuid()) @db.Uuid
+  subscriptionId String              @db.Uuid
+  type           String              @db.VarChar(40)
+  fromStatus     SubscriptionStatus?
+  toStatus       SubscriptionStatus?
+  metadata       Json                @default("{}")
+  actorId        String?             @db.Uuid
+  actorEmail     String?             @db.VarChar(180)
+  createdAt      DateTime            @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, createdAt])
+  @@map("subscription_events")
+}
+
+/// Spec §17. Every trial start/extend/cancel/convert, with who and why.
+model TrialEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  type           String    @db.VarChar(20)
+  days           Int?
+  previousEndsAt DateTime?
+  newEndsAt      DateTime?
+  reason         String?   @db.VarChar(400)
+  actorId        String?   @db.Uuid
+  actorEmail     String?   @db.VarChar(180)
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@map("trial_events")
+}
+
+/* ────────────────────────── Invoices & payments ─────────────────────────── */
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  PARTIALLY_PAID
+  OVERDUE
+  VOID
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentMethod {
+  CARD
+  UPI
+  NETBANKING
+  BANK_TRANSFER
+  CASH
+  CHEQUE
+  MANUAL
+}
+
+model Invoice {
+  id             String  @id @default(uuid()) @db.Uuid
+  number         String  @unique @db.VarChar(32)
+  organizationId String  @db.Uuid
+  subscriptionId String? @db.Uuid
+  planId         String? @db.Uuid
+
+  billingCycle BillingCycle
+  periodStart  DateTime
+  periodEnd    DateTime
+
+  currency        String @default("INR") @db.Char(3)
+  subtotalMinor   Int    @default(0)
+  discountMinor   Int    @default(0)
+  taxMinor        Int    @default(0)
+  totalMinor      Int    @default(0)
+  amountPaidMinor Int    @default(0)
+
+  status   InvoiceStatus @default(DRAFT)
+  issuedAt DateTime?
+  dueAt    DateTime?
+  paidAt   DateTime?
+  voidedAt DateTime?
+  notes    String?       @db.VarChar(400)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  plan         Plan?         @relation(fields: [planId], references: [id])
+  payments     Payment[]
+
+  @@index([organizationId, status])
+  @@index([status, dueAt])
+  @@map("invoices")
+}
+
+model Payment {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  invoiceId      String? @db.Uuid
+
+  amountMinor   Int
+  refundedMinor Int           @default(0)
+  currency      String        @default("INR") @db.Char(3)
+  method        PaymentMethod
+  status        PaymentStatus @default(PENDING)
+  reference     String?       @db.VarChar(120)
+  note          String?       @db.VarChar(400)
+  paidAt        DateTime?
+  failedReason  String?       @db.VarChar(400)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  invoice      Invoice?     @relation(fields: [invoiceId], references: [id])
+  refunds      Refund[]
+
+  @@index([organizationId, status])
+  @@index([paidAt])
+  @@map("payments")
+}
+
+model Refund {
+  id          String   @id @default(uuid()) @db.Uuid
+  paymentId   String   @db.Uuid
+  amountMinor Int
+  reason      String   @db.VarChar(400)
+  actorId     String?  @db.Uuid
+  actorEmail  String?  @db.VarChar(180)
+  createdAt   DateTime @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@map("refunds")
+}
+
+/* ───────────────────────────── Support ──────────────────────────────────── */
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model SupportTicket {
+  id             String         @id @default(uuid()) @db.Uuid
+  reference      String         @unique @db.VarChar(20)
+  organizationId String         @db.Uuid
+  requesterName  String?        @db.VarChar(120)
+  requesterEmail String?        @db.VarChar(180)
+  subject        String         @db.VarChar(160)
+  description    String
+  priority       TicketPriority @default(MEDIUM)
+  status         TicketStatus   @default(OPEN)
+  assignedToId   String?        @db.Uuid
+  resolvedAt     DateTime?
+  closedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedTo   PlatformUser? @relation("TicketAssignee", fields: [assignedToId], references: [id])
+  notes        TicketNote[]
+
+  @@index([status, priority])
+  @@index([organizationId, createdAt])
+  @@map("support_tickets")
+}
+
+/// Spec §22: support notes remain internal. `isInternal` defaults to true so an
+/// accidental omission keeps the note private rather than exposing it.
+model TicketNote {
+  id         String   @id @default(uuid()) @db.Uuid
+  ticketId   String   @db.Uuid
+  authorId   String?  @db.Uuid
+  body       String
+  isInternal Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author PlatformUser? @relation(fields: [authorId], references: [id])
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_notes")
+}
+
+/* ──────────────────────── Feature flags & audit ─────────────────────────── */
+
+/// Spec §23. Resolution order: organization override → plan → global.
+model FeatureFlag {
+  key             String   @id @db.VarChar(60)
+  description     String?  @db.VarChar(300)
+  enabledGlobally Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  plans         FeatureFlagPlan[]
+  organizations FeatureFlagOrganization[]
+
+  @@map("feature_flags")
+}
+
+model FeatureFlagPlan {
+  flagKey String @db.VarChar(60)
+  planId  String @db.Uuid
+
+  flag FeatureFlag @relation(fields: [flagKey], references: [key], onDelete: Cascade)
+  plan Plan        @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@id([flagKey, planId])
+  @@map("feature_flag_plans")
+}
+
+model FeatureFlagOrganization {
+  flagKey        String  @db.VarChar(60)
+  organizationId String  @db.Uuid
+  enabled        Boolean @default(true)
+
+  flag         FeatureFlag  @relation(fields: [flagKey], references: [key], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([flagKey, organizationId])
+  @@map("feature_flag_organizations")
+}
+
+/// Spec §24 & §72. Append-only. `before`/`after` hold the changed fields only,
+/// never whole rows, and never password hashes or tokens.
+/// Spec §§24, 72.
+///
+/// `actorId` is deliberately **not** a foreign key. The actor may be a
+/// PlatformUser (`actorType: PLATFORM`), an OrgUser (`ORG`) or nobody
+/// (`SYSTEM`), so no single FK can describe it — an FK to PlatformUser silently
+/// rejected every tenant action ever recorded, which is exactly the bug this
+/// replaced. Beyond that, an audit row must outlive the account it describes:
+/// a constraint would either block deleting a user or cascade away the trail,
+/// and both defeat the point. `actorEmail` is denormalised here for the same
+/// reason — the record has to stand on its own.
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  actorType      String   @db.VarChar(20)
+  actorId        String?  @db.Uuid
+  actorEmail     String?  @db.VarChar(180)
+  organizationId String?  @db.Uuid
+  action         String   @db.VarChar(80)
+  entityType     String   @db.VarChar(60)
+  entityId       String?  @db.VarChar(64)
+  before         Json?
+  after          Json?
+  reason         String?  @db.VarChar(400)
+  ipAddress      String?  @db.VarChar(64)
+  userAgent      String?  @db.VarChar(400)
+  createdAt      DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+  /// Actor lookups are by id across both user tables, so this carries its own index.
+  @@index([actorType, actorId])
+  @@map("audit_logs")
+}
+
+
+/// Spec §§35 and 75. An append-only record of every move between branches.
+///
+/// Historical rows keep pointing at the branch that owned them at the time —
+/// only future records follow the destination — so a report over last term still
+/// attributes correctly after a student moves.
+model BranchTransfer {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  /// "USER" now; "STUDENT", "BATCH" and "FACULTY" as later phases land.
+  entityType     String   @db.VarChar(20)
+  entityId       String   @db.Uuid
+  entityLabel    String?  @db.VarChar(160)
+  fromBranchId   String?  @db.Uuid
+  toBranchId     String   @db.Uuid
+  reason         String?  @db.VarChar(400)
+  effectiveAt    DateTime @default(now())
+  actorId        String?  @db.Uuid
+  actorEmail     String?  @db.VarChar(180)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fromBranch   Branch?      @relation("TransferFrom", fields: [fromBranchId], references: [id])
+  toBranch     Branch       @relation("TransferTo", fields: [toBranchId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+  @@map("branch_transfers")
+}
+
+/* ═══════════════════════ PHASE 2 — People & admissions ═══════════════════ */
+
+enum TargetExam {
+  NEET
+  JEE_MAIN
+  JEE_ADVANCED
+  NEET_JEE
+  FOUNDATION
+  OTHER
+}
+
+/// Spec §42. Courses are organization-level; a batch is their branch-level
+/// execution, which is why Course carries no branchId.
+model Course {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  name           String     @db.VarChar(140)
+  code           String     @db.VarChar(24)
+  targetExam     TargetExam @default(NEET)
+  durationMonths Int        @default(12)
+  description    String?    @db.VarChar(400)
+  isActive       Boolean    @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subjects      Subject[]
+  batches       Batch[]
+  students      Student[]
+  enquiries     Enquiry[]
+  announcements Announcement[]
+  tests         Test[]
+  feeStructures FeeStructure[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, isActive])
+  @@map("courses")
+}
+
+model Subject {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  courseId       String? @db.Uuid
+  name           String  @db.VarChar(120)
+  code           String  @db.VarChar(24)
+  isActive       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  course         Course?         @relation(fields: [courseId], references: [id])
+  batchFaculty   BatchFaculty[]
+  chapters       Chapter[]
+  lessonPlans    LessonPlan[]
+  timetableSlots TimetableSlot[]
+  classSessions  ClassSession[]
+  questions      Question[]
+  homework       Homework[]
+  studyMaterials StudyMaterial[]
+  doubts         Doubt[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, courseId])
+  @@map("subjects")
+}
+
+/// Spec §41 — a batch belongs to an academic year, so cohorts stay separable
+/// once the same batch name recurs next year.
+model AcademicYear {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  name           String   @db.VarChar(20)
+  startDate      DateTime @db.Date
+  endDate        DateTime @db.Date
+  isCurrent      Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  batches       Batch[]
+  feeStructures FeeStructure[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, isCurrent])
+  @@map("academic_years")
+}
+
+enum BatchStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+/// Spec §41. Branch-scoped: a batch runs at exactly one branch.
+model Batch {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @db.Uuid
+  branchId       String      @db.Uuid
+  courseId       String      @db.Uuid
+  academicYearId String      @db.Uuid
+  name           String      @db.VarChar(120)
+  code           String      @db.VarChar(24)
+  status         BatchStatus @default(PLANNED)
+
+  /// Enrolment ceiling. Enforced on every enrolment, not just displayed.
+  capacity  Int       @default(60)
+  room      String?   @db.VarChar(60)
+  startDate DateTime? @db.Date
+  endDate   DateTime? @db.Date
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch         @relation(fields: [branchId], references: [id])
+  course       Course         @relation(fields: [courseId], references: [id])
+  academicYear AcademicYear   @relation(fields: [academicYearId], references: [id])
+  students       BatchStudent[]
+  faculty        BatchFaculty[]
+  syllabus       SyllabusProgress[]
+  lessonPlans    LessonPlan[]
+  timetableSlots TimetableSlot[]
+  classSessions  ClassSession[]
+  attendance     Attendance[]
+  announcements  Announcement[]
+  tests          TestBatch[]
+  homework       Homework[]
+  studyMaterials StudyMaterial[]
+  doubts         Doubt[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, branchId, status])
+  @@map("batches")
+}
+
+enum BatchStudentStatus {
+  ENROLLED
+  LEFT
+  COMPLETED
+  TRANSFERRED
+}
+
+/// Enrolment as a relationship with a lifetime, not a foreign key on Student —
+/// a student may move between batches and the history has to survive (spec §74).
+model BatchStudent {
+  id        String             @id @default(uuid()) @db.Uuid
+  batchId   String             @db.Uuid
+  studentId String             @db.Uuid
+  status    BatchStudentStatus @default(ENROLLED)
+  joinedAt  DateTime           @default(now())
+  leftAt    DateTime?
+  note      String?            @db.VarChar(400)
+
+  batch   Batch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, studentId])
+  @@index([studentId, status])
+  @@map("batch_students")
+}
+
+/// Spec §45 — who teaches which subject in which batch. `subjectId` is required
+/// so the row always answers that question; a batch lead is flagged separately.
+model BatchFaculty {
+  id             String    @id @default(uuid()) @db.Uuid
+  batchId        String    @db.Uuid
+  facultyId      String    @db.Uuid
+  subjectId      String    @db.Uuid
+  isClassTeacher Boolean   @default(false)
+  assignedAt     DateTime  @default(now())
+  endedAt        DateTime?
+
+  batch   Batch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  faculty OrgUser @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  subject Subject @relation(fields: [subjectId], references: [id])
+
+  @@unique([batchId, facultyId, subjectId])
+  @@index([facultyId, endedAt])
+  @@map("batch_faculty")
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNDISCLOSED
+}
+
+enum StudentStatus {
+  ACTIVE
+  INACTIVE
+  DROPPED
+  PASSED_OUT
+  ARCHIVED
+}
+
+/// Spec §39. `branchId` is the student's *current* operational branch; the trail
+/// of previous ones lives in StudentBranchHistory so historical reporting stays
+/// accurate after a transfer.
+model Student {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  branchId       String        @db.Uuid
+  studentCode    String        @db.VarChar(24)
+  status         StudentStatus @default(ACTIVE)
+
+  name        String    @db.VarChar(140)
+  photoUrl    String?   @db.VarChar(400)
+  dateOfBirth DateTime? @db.Date
+  gender      Gender    @default(UNDISCLOSED)
+  phone       String?   @db.VarChar(20)
+  email       String?   @db.VarChar(180)
+
+  /// Parent contact. A full Parent record arrives with the portal in Phase 9.
+  parentName     String? @db.VarChar(120)
+  parentPhone    String? @db.VarChar(20)
+  parentEmail    String? @db.VarChar(180)
+  parentRelation String? @db.VarChar(20)
+
+  /// Academic background (spec §39).
+  previousSchool String? @db.VarChar(160)
+  previousClass  String? @db.VarChar(40)
+  previousMarks  String? @db.VarChar(40)
+
+  targetExam    TargetExam @default(NEET)
+  courseId      String?    @db.Uuid
+  admissionDate DateTime   @db.Date
+
+  addressLine String? @db.VarChar(200)
+  city        String? @db.VarChar(80)
+  state       String? @db.VarChar(80)
+  pincode     String? @db.VarChar(12)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  organization  Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch        Branch                 @relation(fields: [branchId], references: [id])
+  course        Course?                @relation(fields: [courseId], references: [id])
+  batches       BatchStudent[]
+  branchHistory StudentBranchHistory[]
+  enquiry       Enquiry?
+  attendance    Attendance[]
+  leaveRequests LeaveRequest[]
+  testAttempts  TestAttempt[]
+  homeworkTargets HomeworkStudent[]
+  homeworkSubmissions HomeworkSubmission[]
+  studyMaterialTargets StudyMaterialStudent[]
+  doubts        Doubt[]
+  fees          StudentFee[]
+  feePayments   FeePayment[]
+  guardians     Guardian[]
+  hostelStays   HostelAllocation[]
+  transportRides TransportAllocation[]
+  messPlans     MessSubscription[]
+  /// Spec §65's sibling: a student's own login, when they have one. Nullable
+  /// because most students are administered without ever signing in.
+  portalUser    OrgUser?      @relation("StudentPortalUser", fields: [portalUserId], references: [id])
+  portalUserId  String?       @unique @db.Uuid
+
+  @@unique([organizationId, studentCode])
+  @@index([organizationId, branchId, status])
+  @@index([organizationId, status])
+  @@map("students")
+}
+
+/// Spec §75 — 2026-04 → Chennai, 2026-07 → Salem, current → Salem.
+model StudentBranchHistory {
+  id        String    @id @default(uuid()) @db.Uuid
+  studentId String    @db.Uuid
+  branchId  String    @db.Uuid
+  fromDate  DateTime  @default(now())
+  toDate    DateTime?
+  reason    String?   @db.VarChar(400)
+  actorId   String?   @db.Uuid
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  branch  Branch  @relation(fields: [branchId], references: [id])
+
+  @@index([studentId, fromDate])
+  @@map("student_branch_history")
+}
+
+enum EnquiryStage {
+  NEW
+  CONTACTED
+  COUNSELLING
+  TRIAL
+  FOLLOW_UP
+  ADMITTED
+  LOST
+}
+
+enum EnquirySource {
+  WALK_IN
+  PHONE
+  WEBSITE
+  REFERRAL
+  SOCIAL_MEDIA
+  CAMPAIGN
+  OTHER
+}
+
+/// Spec §38. Branch-scoped: an enquiry is always for a specific branch, because
+/// that is who will follow it up.
+model Enquiry {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  branchId       String        @db.Uuid
+  enquiryCode    String        @db.VarChar(24)
+  stage          EnquiryStage  @default(NEW)
+  source         EnquirySource @default(WALK_IN)
+
+  studentName String     @db.VarChar(140)
+  phone       String     @db.VarChar(20)
+  email       String?    @db.VarChar(180)
+  parentName  String?    @db.VarChar(120)
+  parentPhone String?    @db.VarChar(20)
+  targetExam  TargetExam @default(NEET)
+  courseId    String?    @db.Uuid
+
+  /// The counsellor working this enquiry (spec §38).
+  assignedToId  String?   @db.Uuid
+  nextFollowUpAt DateTime?
+  lostReason    String?   @db.VarChar(400)
+  notes         String?   @db.VarChar(1000)
+
+  /// Set once the enquiry converts; the link is what makes conversion auditable.
+  convertedStudentId String?   @unique @db.Uuid
+  admittedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch           Branch            @relation(fields: [branchId], references: [id])
+  course           Course?           @relation(fields: [courseId], references: [id])
+  assignedTo       OrgUser?          @relation("EnquiryAssignee", fields: [assignedToId], references: [id])
+  convertedStudent Student?          @relation(fields: [convertedStudentId], references: [id])
+  activities       EnquiryActivity[]
+
+  @@unique([organizationId, enquiryCode])
+  @@index([organizationId, branchId, stage])
+  @@index([organizationId, nextFollowUpAt])
+  @@map("enquiries")
+}
+
+/// Append-only trail of everything done on an enquiry — calls, counselling,
+/// trial classes and every stage change, so the pipeline is explainable.
+model EnquiryActivity {
+  id          String        @id @default(uuid()) @db.Uuid
+  enquiryId   String        @db.Uuid
+  type        String        @db.VarChar(24)
+  fromStage   EnquiryStage?
+  toStage     EnquiryStage?
+  note        String?       @db.VarChar(1000)
+  scheduledAt DateTime?
+  actorId     String?       @db.Uuid
+  actorName   String?       @db.VarChar(120)
+  createdAt   DateTime      @default(now())
+
+  enquiry Enquiry @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+
+  @@index([enquiryId, createdAt])
+  @@map("enquiry_activities")
+}
+
+/* ═══════════════ PHASE 3 — Academics, syllabus & timetable ══════════════ */
+
+/// Spec §42: Course → Subject → Chapter → Topic. Chapters are organization-level,
+/// like the subject they belong to; only their *delivery* is branch-specific.
+model Chapter {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  subjectId      String  @db.Uuid
+  name           String  @db.VarChar(160)
+  /// Ordering within the subject. Not unique — reordering a syllabus mid-year
+  /// would otherwise require a constraint dance for no benefit.
+  sequence       Int     @default(0)
+  description    String? @db.VarChar(400)
+  estimatedHours Int     @default(0)
+  isActive       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subject      Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topics       Topic[]
+  questions    Question[]
+
+  @@index([organizationId, subjectId, sequence])
+  @@map("chapters")
+}
+
+model Topic {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  chapterId      String  @db.Uuid
+  name           String  @db.VarChar(160)
+  sequence       Int     @default(0)
+  estimatedHours Int     @default(1)
+  isActive       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  chapter      Chapter          @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  progress     SyllabusProgress[]
+  planTopics   LessonPlanTopic[]
+  questions    Question[]
+
+  @@index([organizationId, chapterId, sequence])
+  @@map("topics")
+}
+
+enum SyllabusStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+}
+
+/// Spec §43 — completion tracking.
+///
+/// Progress is per *batch*, not per course: two batches running the same course
+/// at different branches move through it at their own pace, which is exactly what
+/// the spec means by branch-specific execution of an organization-level syllabus.
+model SyllabusProgress {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  branchId       String         @db.Uuid
+  batchId        String         @db.Uuid
+  topicId        String         @db.Uuid
+  status         SyllabusStatus @default(PLANNED)
+  plannedDate    DateTime?      @db.Date
+  completedDate  DateTime?      @db.Date
+  facultyId      String?        @db.Uuid
+  notes          String?        @db.VarChar(400)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  batch        Batch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  topic        Topic        @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  faculty      OrgUser?     @relation(fields: [facultyId], references: [id])
+
+  @@unique([batchId, topicId])
+  @@index([organizationId, branchId, status])
+  @@map("syllabus_progress")
+}
+
+enum PlanType {
+  LESSON
+  REVISION
+  PRACTICE
+  TEST
+}
+
+enum PlanStatusKind {
+  DRAFT
+  PUBLISHED
+  COMPLETED
+  CANCELLED
+}
+
+/// Spec §44 — lesson, revision, practice and test plans. One model with a type
+/// rather than four near-identical tables.
+model LessonPlan {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  branchId       String         @db.Uuid
+  batchId        String         @db.Uuid
+  subjectId      String         @db.Uuid
+  facultyId      String?        @db.Uuid
+  type           PlanType       @default(LESSON)
+  status         PlanStatusKind @default(DRAFT)
+  title          String         @db.VarChar(160)
+  description    String?        @db.VarChar(1000)
+  plannedDate    DateTime       @db.Date
+  durationMinutes Int           @default(60)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch            @relation(fields: [branchId], references: [id])
+  batch        Batch             @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  subject      Subject           @relation(fields: [subjectId], references: [id])
+  faculty      OrgUser?          @relation(fields: [facultyId], references: [id])
+  topics       LessonPlanTopic[]
+
+  @@index([organizationId, branchId, plannedDate])
+  @@index([batchId, plannedDate])
+  @@map("lesson_plans")
+}
+
+model LessonPlanTopic {
+  planId  String @db.Uuid
+  topicId String @db.Uuid
+
+  plan  LessonPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  topic Topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([planId, topicId])
+  @@map("lesson_plan_topics")
+}
+
+/// Rooms exist as records because §46 requires room conflict detection, and you
+/// cannot detect a clash on a free-text string.
+model Room {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  branchId       String  @db.Uuid
+  name           String  @db.VarChar(80)
+  code           String  @db.VarChar(24)
+  capacity       Int     @default(60)
+  isActive       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  slots        TimetableSlot[]
+  sessions     ClassSession[]
+
+  @@unique([branchId, code])
+  @@index([organizationId, branchId, isActive])
+  @@map("rooms")
+}
+
+enum SlotStatus {
+  ACTIVE
+  SUSPENDED
+  ENDED
+}
+
+/// Spec §46 — a recurring weekly timetable entry.
+///
+/// Times are minutes from midnight rather than a TIME column: overlap maths
+/// becomes plain integer comparison, and a weekly grid has no date to anchor a
+/// timezone to, so a TIME would imply a precision that does not exist.
+model TimetableSlot {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  branchId       String     @db.Uuid
+  batchId        String     @db.Uuid
+  subjectId      String     @db.Uuid
+  facultyId      String     @db.Uuid
+  roomId         String?    @db.Uuid
+  /// ISO-8601 weekday, 1 = Monday.
+  dayOfWeek      Int
+  startMinute    Int
+  endMinute      Int
+  status         SlotStatus @default(ACTIVE)
+  effectiveFrom  DateTime   @db.Date
+  effectiveTo    DateTime?  @db.Date
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch         @relation(fields: [branchId], references: [id])
+  batch        Batch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  subject      Subject        @relation(fields: [subjectId], references: [id])
+  faculty      OrgUser        @relation(fields: [facultyId], references: [id])
+  room         Room?          @relation(fields: [roomId], references: [id])
+  sessions     ClassSession[]
+
+  @@index([organizationId, branchId, dayOfWeek])
+  @@index([batchId, dayOfWeek])
+  /// Faculty conflicts are checked across every branch (spec §46), so this index
+  /// deliberately omits branchId.
+  @@index([facultyId, dayOfWeek, status])
+  @@index([roomId, dayOfWeek, status])
+  @@map("timetable_slots")
+}
+
+enum SessionStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+/// A dated occurrence of a class. Phase 4 attaches attendance to these rows, so
+/// they exist now rather than being derived on the fly at that point.
+model ClassSession {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  branchId       String        @db.Uuid
+  batchId        String        @db.Uuid
+  subjectId      String        @db.Uuid
+  facultyId      String        @db.Uuid
+  roomId         String?       @db.Uuid
+  slotId         String?       @db.Uuid
+  date           DateTime      @db.Date
+  startMinute    Int
+  endMinute      Int
+  status         SessionStatus @default(SCHEDULED)
+  cancelReason   String?       @db.VarChar(400)
+  notes          String?       @db.VarChar(1000)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch         @relation(fields: [branchId], references: [id])
+  batch        Batch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  subject      Subject        @relation(fields: [subjectId], references: [id])
+  faculty      OrgUser        @relation(fields: [facultyId], references: [id])
+  room         Room?          @relation(fields: [roomId], references: [id])
+  slot         TimetableSlot? @relation(fields: [slotId], references: [id])
+  attendance   Attendance[]
+
+  /// One generated occurrence per slot per day; regeneration is idempotent.
+  @@unique([slotId, date])
+  @@index([organizationId, branchId, date])
+  @@index([batchId, date])
+  @@index([facultyId, date])
+  @@map("class_sessions")
+}
+
+/* ══════════ PHASE 4 — Attendance, leave & communication ═════════════════ */
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  HALF_DAY
+  EXCUSED
+}
+
+/// Spec §47.
+///
+/// Attendance hangs off a ClassSession rather than a bare date: the timetable
+/// already says which class happened, and anchoring to it means a student who
+/// attends Physics but skips Chemistry on the same day is recorded accurately.
+/// `HALF_DAY` therefore means "left partway through this class".
+///
+/// `branchId` is denormalised from the session so branch-scoped reporting does not
+/// need a join on every read — attendance is the highest-volume table in the ERP.
+model Attendance {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  branchId       String           @db.Uuid
+  batchId        String           @db.Uuid
+  sessionId      String           @db.Uuid
+  studentId      String           @db.Uuid
+  date           DateTime         @db.Date
+  status         AttendanceStatus
+  minutesLate    Int?
+  note           String?          @db.VarChar(300)
+
+  markedById String?  @db.Uuid
+  markedAt   DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  batch        Batch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  session      ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  markedBy     OrgUser?     @relation(fields: [markedById], references: [id])
+
+  /// One record per student per class. Re-marking updates rather than appends.
+  @@unique([sessionId, studentId])
+  @@index([organizationId, branchId, date])
+  @@index([studentId, date])
+  @@index([batchId, date])
+  @@map("attendance")
+}
+
+enum LeaveSubject {
+  STUDENT
+  FACULTY
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+/// Spec §48. One table for both students and faculty — the approval workflow and
+/// the branch scoping are identical, and splitting them would duplicate both.
+model LeaveRequest {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  branchId       String       @db.Uuid
+  subjectType    LeaveSubject
+  studentId      String?      @db.Uuid
+  facultyId      String?      @db.Uuid
+
+  fromDate DateTime    @db.Date
+  toDate   DateTime    @db.Date
+  reason   String      @db.VarChar(600)
+  status   LeaveStatus @default(PENDING)
+
+  reviewedById String?   @db.Uuid
+  reviewedAt   DateTime?
+  reviewNote   String?   @db.VarChar(400)
+
+  requestedById String?  @db.Uuid
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  student      Student?     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  faculty      OrgUser?     @relation("LeaveFaculty", fields: [facultyId], references: [id], onDelete: Cascade)
+  reviewedBy   OrgUser?     @relation("LeaveReviewer", fields: [reviewedById], references: [id])
+
+  @@index([organizationId, branchId, status])
+  @@index([studentId, fromDate])
+  @@index([facultyId, fromDate])
+  @@map("leave_requests")
+}
+
+enum AnnouncementAudience {
+  ALL_BRANCHES
+  BRANCH
+  BATCH
+  COURSE
+  FACULTY
+  STUDENTS
+  PARENTS
+}
+
+enum AnnouncementStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Spec §49. `audience` says *who*; `targets` says *where*.
+///
+/// An organization-wide notice carries no branch; a branch or multi-branch notice
+/// carries one row per branch in `targets`, which is what lets a Branch Admin see
+/// exactly the announcements addressed to them and nothing else.
+model Announcement {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @db.Uuid
+  title          String               @db.VarChar(160)
+  body           String               @db.VarChar(4000)
+  audience       AnnouncementAudience @default(BRANCH)
+  status         AnnouncementStatus   @default(DRAFT)
+
+  batchId  String? @db.Uuid
+  courseId String? @db.Uuid
+
+  publishedAt   DateTime?
+  publishedById String?   @db.Uuid
+  pinnedUntil   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  batch        Batch?               @relation(fields: [batchId], references: [id])
+  course       Course?              @relation(fields: [courseId], references: [id])
+  publishedBy  OrgUser?             @relation(fields: [publishedById], references: [id])
+  targets      AnnouncementTarget[]
+
+  @@index([organizationId, status, publishedAt])
+  @@map("announcements")
+}
+
+model AnnouncementTarget {
+  announcementId String @db.Uuid
+  branchId       String @db.Uuid
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  branch       Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([announcementId, branchId])
+  @@index([branchId])
+  @@map("announcement_targets")
+}
+
+/* ═════════════ PHASE 5 — Question bank, tests & results ═════════════════ */
+
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+  NUMERIC
+  TRUE_FALSE
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+/// Spec §51.
+///
+/// `branchId` null means an organization-wide question, reusable by every branch;
+/// a branch-specific question is visible only to that branch. That single nullable
+/// column is what makes a shared library and private banks coexist.
+///
+/// `lockedAt` is stamped the first time the question appears in a published test.
+/// After that its body, options and answer are frozen: editing a question that
+/// students have already been marked against would silently rewrite history.
+model Question {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  branchId       String?      @db.Uuid
+  subjectId      String       @db.Uuid
+  chapterId      String?      @db.Uuid
+  topicId        String?      @db.Uuid
+
+  type       QuestionType @default(SINGLE_CHOICE)
+  difficulty Difficulty   @default(MEDIUM)
+  body       String       @db.VarChar(4000)
+  explanation String?     @db.VarChar(4000)
+
+  marks         Float @default(4)
+  negativeMarks Float @default(1)
+
+  /// Answer for NUMERIC questions; choice answers live on the options.
+  numericAnswer    Float?
+  numericTolerance Float  @default(0)
+
+  isActive   Boolean   @default(true)
+  usageCount Int       @default(0)
+  lockedAt   DateTime?
+
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?          @relation(fields: [branchId], references: [id])
+  subject      Subject          @relation(fields: [subjectId], references: [id])
+  chapter      Chapter?         @relation(fields: [chapterId], references: [id])
+  topic        Topic?           @relation(fields: [topicId], references: [id])
+  createdBy    OrgUser?         @relation(fields: [createdById], references: [id])
+  options      QuestionOption[]
+  testLinks    TestQuestion[]
+  answers      TestAnswer[]
+
+  @@index([organizationId, subjectId, isActive])
+  @@index([organizationId, branchId])
+  @@index([organizationId, difficulty])
+  @@map("questions")
+}
+
+model QuestionOption {
+  id         String  @id @default(uuid()) @db.Uuid
+  questionId String  @db.Uuid
+  label      String  @db.VarChar(4)
+  body       String  @db.VarChar(2000)
+  isCorrect  Boolean @default(false)
+  sequence   Int     @default(0)
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId, sequence])
+  @@map("question_options")
+}
+
+/// Spec §52. ORGANIZATION reaches every branch; MULTI_BRANCH names them in
+/// `branches`; BRANCH is a single branch's own test.
+enum TestScope {
+  ORGANIZATION
+  MULTI_BRANCH
+  BRANCH
+}
+
+enum TestMode {
+  ONLINE
+  OFFLINE
+}
+
+enum TestStatus {
+  DRAFT
+  SCHEDULED
+  LIVE
+  CLOSED
+  RESULTS_PUBLISHED
+  CANCELLED
+}
+
+model Test {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  title          String     @db.VarChar(180)
+  code           String     @db.VarChar(24)
+  description    String?    @db.VarChar(1000)
+  scope          TestScope  @default(BRANCH)
+  mode           TestMode   @default(ONLINE)
+  status         TestStatus @default(DRAFT)
+
+  courseId String? @db.Uuid
+
+  totalMarks      Float    @default(0)
+  durationMinutes Int      @default(180)
+  startAt         DateTime
+  endAt           DateTime
+
+  negativeMarking  Boolean @default(true)
+  shuffleQuestions Boolean @default(false)
+  /// Students may see their score the moment they submit, or wait for publication.
+  instantResults   Boolean @default(false)
+
+  resultsPublishedAt DateTime?
+  createdById        String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  course       Course?        @relation(fields: [courseId], references: [id])
+  createdBy    OrgUser?       @relation(fields: [createdById], references: [id])
+  branches     TestBranch[]
+  batches      TestBatch[]
+  questions    TestQuestion[]
+  attempts     TestAttempt[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, status, startAt])
+  @@map("tests")
+}
+
+/// Which branches a MULTI_BRANCH test reaches. Empty for ORGANIZATION scope.
+model TestBranch {
+  testId   String @db.Uuid
+  branchId String @db.Uuid
+
+  test   Test   @relation(fields: [testId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([testId, branchId])
+  @@index([branchId])
+  @@map("test_branches")
+}
+
+/// Which batches actually sit the test. This is what defines the candidate list.
+model TestBatch {
+  testId  String @db.Uuid
+  batchId String @db.Uuid
+
+  test  Test  @relation(fields: [testId], references: [id], onDelete: Cascade)
+  batch Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@id([testId, batchId])
+  @@index([batchId])
+  @@map("test_batches")
+}
+
+/// Marks are stored per test, not read from the question — a question may be
+/// worth 4 marks in one paper and 2 in another, and past papers must not shift
+/// when the bank is re-weighted.
+model TestQuestion {
+  id            String @id @default(uuid()) @db.Uuid
+  testId        String @db.Uuid
+  questionId    String @db.Uuid
+  sequence      Int    @default(0)
+  marks         Float
+  negativeMarks Float  @default(0)
+
+  test     Test     @relation(fields: [testId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id])
+
+  @@unique([testId, questionId])
+  @@index([testId, sequence])
+  @@map("test_questions")
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  AUTO_SUBMITTED
+  EVALUATED
+  ABANDONED
+}
+
+/// Spec §53.
+///
+/// `expiresAt` is computed by the server when the attempt starts and is the only
+/// authority on the deadline — a client clock, a paused tab or a reconnect cannot
+/// extend it. Auto-submit is enforced on read, so an attempt that lapses while the
+/// browser was closed is still closed correctly.
+model TestAttempt {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  branchId       String        @db.Uuid
+  testId         String        @db.Uuid
+  studentId      String        @db.Uuid
+  status         AttemptStatus @default(IN_PROGRESS)
+
+  startedAt   DateTime  @default(now())
+  expiresAt   DateTime
+  lastSavedAt DateTime  @default(now())
+  submittedAt DateTime?
+
+  score            Float @default(0)
+  maxScore         Float @default(0)
+  correctCount     Int   @default(0)
+  wrongCount       Int   @default(0)
+  unattemptedCount Int   @default(0)
+  percentage       Float @default(0)
+
+  /// Spec §54 — filled when results are published.
+  batchRank        Int?
+  branchRank       Int?
+  organizationRank Int?
+  percentile       Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  test         Test         @relation(fields: [testId], references: [id], onDelete: Cascade)
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  answers      TestAnswer[]
+
+  /// One attempt per student per test.
+  @@unique([testId, studentId])
+  @@index([testId, score])
+  @@index([organizationId, branchId, testId])
+  @@map("test_attempts")
+}
+
+model TestAnswer {
+  id         String @id @default(uuid()) @db.Uuid
+  attemptId  String @db.Uuid
+  questionId String @db.Uuid
+
+  /// Option ids for choice questions; empty means unattempted.
+  selectedOptionIds String[] @default([])
+  numericAnswer     Float?
+
+  isCorrect        Boolean?
+  marksAwarded     Float    @default(0)
+  timeSpentSeconds Int      @default(0)
+  answeredAt       DateTime @default(now())
+
+  attempt  TestAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question Question    @relation(fields: [questionId], references: [id])
+
+  @@unique([attemptId, questionId])
+  @@map("test_answers")
+}
+
+/* ── Phase 7 — homework, study materials & doubts ────────────────────────── */
+
+enum HomeworkAudience {
+  BRANCH
+  MULTI_BRANCH
+  BATCH
+  STUDENTS
+}
+
+enum HomeworkStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+/// Shared by homework and study materials — both use one status per (item,
+/// student) row rather than a computed "is it late yet" flag, because grading
+/// (marksAwarded/feedback) needs somewhere to live regardless of status.
+enum SubmissionStatus {
+  PENDING
+  SUBMITTED
+  LATE
+}
+
+/// Spec §58. `audience` says who; `targets` says which branches it reaches,
+/// `batchId` narrows to one batch, `students` narrows to individuals — the
+/// same shape Announcement uses (spec §49), plus the per-student tier the spec
+/// asks for here that a notice has no equivalent of.
+model Homework {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  title          String           @db.VarChar(160)
+  instructions   String           @db.VarChar(4000)
+  subjectId      String?          @db.Uuid
+  audience       HomeworkAudience @default(BATCH)
+  status         HomeworkStatus   @default(DRAFT)
+
+  batchId String? @db.Uuid
+
+  dueAt         DateTime
+  maxMarks      Float?
+  attachmentUrl String? @db.VarChar(400)
+
+  publishedAt DateTime?
+  createdById String    @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subject      Subject?             @relation(fields: [subjectId], references: [id])
+  batch        Batch?               @relation(fields: [batchId], references: [id])
+  createdBy    OrgUser              @relation(fields: [createdById], references: [id])
+  targets      HomeworkTarget[]
+  students     HomeworkStudent[]
+  submissions  HomeworkSubmission[]
+
+  @@index([organizationId, status, dueAt])
+  @@map("homework")
+}
+
+/// Which branches a BRANCH/MULTI_BRANCH homework reaches — empty otherwise.
+model HomeworkTarget {
+  homeworkId String @db.Uuid
+  branchId   String @db.Uuid
+
+  homework Homework @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([homeworkId, branchId])
+  @@index([branchId])
+  @@map("homework_targets")
+}
+
+/// STUDENTS-audience targeting — individual students named directly.
+model HomeworkStudent {
+  homeworkId String @db.Uuid
+  studentId  String @db.Uuid
+
+  homework Homework @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  student  Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([homeworkId, studentId])
+  @@index([studentId])
+  @@map("homework_students")
+}
+
+/// One row per student this homework reaches, created when it is published —
+/// "who owes this" is then a query, not a join recomputed against audience
+/// rules on every read. Marking mirrors how Attendance is taken: staff records
+/// the outcome, since there is no student portal to submit through yet.
+model HomeworkSubmission {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  homeworkId     String           @db.Uuid
+  studentId      String           @db.Uuid
+  branchId       String           @db.Uuid
+  status         SubmissionStatus @default(PENDING)
+
+  submittedAt   DateTime?
+  attachmentUrl String?   @db.VarChar(400)
+  note          String?   @db.VarChar(2000)
+
+  marksAwarded Float?
+  feedback     String?   @db.VarChar(2000)
+  gradedAt     DateTime?
+  gradedById   String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  homework     Homework     @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  gradedBy     OrgUser?     @relation("HomeworkGrader", fields: [gradedById], references: [id])
+
+  @@unique([homeworkId, studentId])
+  @@index([studentId, status])
+  @@index([branchId, status])
+  @@map("homework_submissions")
+}
+
+enum MaterialAudience {
+  ORGANIZATION
+  BRANCH
+  MULTI_BRANCH
+  BATCH
+  STUDENTS
+}
+
+/// Spec §60. No upload pipeline exists yet (see README) — `fileUrl` is a link,
+/// the same "paste a URL" precedent `Organization.logoUrl` and
+/// `Student.photoUrl` already set, not a real file upload.
+model StudyMaterial {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  title          String           @db.VarChar(160)
+  description    String?          @db.VarChar(2000)
+  subjectId      String?          @db.Uuid
+  audience       MaterialAudience @default(BATCH)
+  fileUrl        String           @db.VarChar(400)
+
+  batchId    String?  @db.Uuid
+  isArchived Boolean  @default(false)
+
+  createdById String @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subject      Subject?                @relation(fields: [subjectId], references: [id])
+  batch        Batch?                  @relation(fields: [batchId], references: [id])
+  createdBy    OrgUser                 @relation(fields: [createdById], references: [id])
+  targets      StudyMaterialTarget[]
+  students     StudyMaterialStudent[]
+
+  @@index([organizationId, audience, isArchived])
+  @@map("study_materials")
+}
+
+model StudyMaterialTarget {
+  materialId String @db.Uuid
+  branchId   String @db.Uuid
+
+  material StudyMaterial @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  branch   Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([materialId, branchId])
+  @@index([branchId])
+  @@map("study_material_targets")
+}
+
+model StudyMaterialStudent {
+  materialId String @db.Uuid
+  studentId  String @db.Uuid
+
+  material StudyMaterial @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  student  Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([materialId, studentId])
+  @@index([studentId])
+  @@map("study_material_students")
+}
+
+enum DoubtStatus {
+  OPEN
+  ANSWERED
+  CLOSED
+}
+
+/// Spec §59 — routes to branch faculty, one specifically assigned faculty
+/// member, or an organization-wide pool (`assignedToId` null). No student
+/// portal exists yet (see README), so a doubt is logged by staff on the
+/// student's behalf — the same "staff acts for the student" pattern the
+/// online-test attempt engine and offline score entry already use.
+model Doubt {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @db.Uuid
+  branchId       String      @db.Uuid
+  studentId      String      @db.Uuid
+  batchId        String?     @db.Uuid
+  subjectId      String      @db.Uuid
+
+  question String      @db.VarChar(2000)
+  status   DoubtStatus @default(OPEN)
+
+  assignedToId String?   @db.Uuid
+  raisedById   String    @db.Uuid
+  closedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch         @relation(fields: [branchId], references: [id])
+  student      Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  batch        Batch?         @relation(fields: [batchId], references: [id])
+  subject      Subject        @relation(fields: [subjectId], references: [id])
+  assignedTo   OrgUser?       @relation("DoubtAssignee", fields: [assignedToId], references: [id])
+  raisedBy     OrgUser        @relation("DoubtRaiser", fields: [raisedById], references: [id])
+  messages     DoubtMessage[]
+
+  @@index([organizationId, branchId, status])
+  @@index([assignedToId, status])
+  @@map("doubts")
+}
+
+/// The reply thread — mirrors `TicketNote`'s shape for the same reason: a
+/// doubt is rarely resolved in one message.
+model DoubtMessage {
+  id        String   @id @default(uuid()) @db.Uuid
+  doubtId   String   @db.Uuid
+  authorId  String   @db.Uuid
+  body      String   @db.VarChar(2000)
+  createdAt DateTime @default(now())
+
+  doubt  Doubt   @relation(fields: [doubtId], references: [id], onDelete: Cascade)
+  author OrgUser @relation("DoubtMessageAuthor", fields: [authorId], references: [id])
+
+  @@index([doubtId, createdAt])
+  @@map("doubt_messages")
+}
+
+/* ── Phase 9 — parent & student portal access ────────────────────────────── */
+
+/// Spec §65. A parent is an OrgUser with role PARENT, linked to one or more
+/// students through this table — deliberately many-to-many, because the spec's
+/// own example has one parent with children at *different branches*, which a
+/// single `branchId` on the user could not express.
+///
+/// The denormalised `parentName`/`parentPhone` fields on Student stay as the
+/// admissions record of who was named at enrolment; a Guardian row is a login.
+/// The two answer different questions and are not kept in step.
+model Guardian {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  userId         String @db.Uuid
+  studentId      String @db.Uuid
+
+  relation  String  @db.VarChar(40)
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         OrgUser      @relation("GuardianUser", fields: [userId], references: [id], onDelete: Cascade)
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, studentId])
+  @@index([studentId])
+  @@index([organizationId, userId])
+  @@map("guardians")
+}
+
+/* ── Phase 9 — hostel, transport & mess ──────────────────────────────────── */
+
+/// Shared by hostel, transport and mess: the lifecycle is identical in all
+/// three — a student holds a place until they give it up — so one enum keeps
+/// the three services from drifting into near-identical copies.
+enum AllocationStatus {
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+/// Indian coaching hostels are almost always segregated, so this is a property
+/// of the building rather than a policy bolted on at allocation time.
+enum HostelOccupancy {
+  BOYS
+  GIRLS
+  MIXED
+}
+
+/// Spec §66. `branchId` null means a centralised hostel serving every branch —
+/// the same "null is organization-wide" convention fee structures and expenses
+/// already use.
+model Hostel {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @db.Uuid
+  branchId       String?         @db.Uuid
+
+  name      String          @db.VarChar(120)
+  code      String          @db.VarChar(24)
+  occupancy HostelOccupancy @default(MIXED)
+  address   String?         @db.VarChar(300)
+  wardenName  String?       @db.VarChar(120)
+  wardenPhone String?       @db.VarChar(20)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?      @relation(fields: [branchId], references: [id])
+  rooms        HostelRoom[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, branchId, isActive])
+  @@map("hostels")
+}
+
+/// `occupied` is maintained alongside each allocation rather than counted on
+/// read, the same reason `StudentFee.paidMinor` is: "which rooms have a bed
+/// free" is a question asked constantly and must stay cheap.
+model HostelRoom {
+  id       String @id @default(uuid()) @db.Uuid
+  hostelId String @db.Uuid
+
+  roomNumber String @db.VarChar(24)
+  floor      String? @db.VarChar(24)
+  capacity   Int    @default(2)
+  occupied   Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hostel      Hostel              @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  allocations HostelAllocation[]
+
+  @@unique([hostelId, roomNumber])
+  @@map("hostel_rooms")
+}
+
+/// A stay, not a flag. Ending an allocation keeps the row, so "who was in room
+/// 204 last term" survives — the same rule `BatchStudent` follows for a batch.
+model HostelAllocation {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  roomId         String           @db.Uuid
+  studentId      String           @db.Uuid
+  status         AllocationStatus @default(ACTIVE)
+
+  allocatedAt DateTime  @default(now())
+  endedAt     DateTime?
+  endReason   String?   @db.VarChar(300)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  room         HostelRoom   @relation(fields: [roomId], references: [id])
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, status])
+  @@index([roomId, status])
+  @@map("hostel_allocations")
+}
+
+enum VehicleStatus {
+  ACTIVE
+  MAINTENANCE
+  RETIRED
+}
+
+/// Spec §67 — vehicles and their drivers. A driver is recorded on the vehicle
+/// rather than modelled as an OrgUser: they do not sign in, and inventing staff
+/// accounts for them would put people in the staff directory who never use it.
+model Vehicle {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  branchId       String?       @db.Uuid
+
+  registration String        @db.VarChar(24)
+  model        String?       @db.VarChar(80)
+  capacity     Int           @default(30)
+  status       VehicleStatus @default(ACTIVE)
+
+  driverName    String? @db.VarChar(120)
+  driverPhone   String? @db.VarChar(20)
+  driverLicence String? @db.VarChar(40)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?          @relation(fields: [branchId], references: [id])
+  routes       TransportRoute[]
+
+  @@unique([organizationId, registration])
+  @@index([organizationId, branchId, status])
+  @@map("vehicles")
+}
+
+model TransportRoute {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  branchId       String? @db.Uuid
+  vehicleId      String? @db.Uuid
+
+  name String @db.VarChar(120)
+  code String @db.VarChar(24)
+  /// Termly transport charge, in paise. Billed through the normal fee
+  /// structure; this is the figure a counsellor quotes.
+  fareMinor Int @default(0)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?                 @relation(fields: [branchId], references: [id])
+  vehicle      Vehicle?                @relation(fields: [vehicleId], references: [id])
+  stops        RouteStop[]
+  allocations  TransportAllocation[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, branchId, isActive])
+  @@map("transport_routes")
+}
+
+/// `pickupMinute` is minutes from midnight, exactly as timetable slots are: a
+/// recurring daily pickup has no date to anchor a timezone to, and integer
+/// comparison is exact.
+model RouteStop {
+  id      String @id @default(uuid()) @db.Uuid
+  routeId String @db.Uuid
+
+  name         String @db.VarChar(120)
+  landmark     String? @db.VarChar(160)
+  sequence     Int    @default(0)
+  pickupMinute Int
+  dropMinute   Int?
+
+  route       TransportRoute        @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  allocations TransportAllocation[]
+
+  @@unique([routeId, sequence])
+  @@map("route_stops")
+}
+
+model TransportAllocation {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  routeId        String           @db.Uuid
+  stopId         String           @db.Uuid
+  studentId      String           @db.Uuid
+  status         AllocationStatus @default(ACTIVE)
+
+  allocatedAt DateTime  @default(now())
+  endedAt     DateTime?
+  endReason   String?   @db.VarChar(300)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  route        TransportRoute @relation(fields: [routeId], references: [id])
+  stop         RouteStop      @relation(fields: [stopId], references: [id])
+  student      Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, status])
+  @@index([routeId, status])
+  @@map("transport_allocations")
+}
+
+/// Spec §68 is a single line — "support branch-specific or centralized mess
+/// operations". Modelled as the minimum that is actually operable: a plan a
+/// student is subscribed to, priced per month. Anything more (menus, daily
+/// attendance at meals) would be invention, not implementation.
+model MessPlan {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  branchId       String? @db.Uuid
+
+  name             String  @db.VarChar(120)
+  description      String? @db.VarChar(600)
+  monthlyFareMinor Int     @default(0)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization  Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch        Branch?             @relation(fields: [branchId], references: [id])
+  subscriptions MessSubscription[]
+
+  @@index([organizationId, branchId, isActive])
+  @@map("mess_plans")
+}
+
+model MessSubscription {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  messPlanId     String           @db.Uuid
+  studentId      String           @db.Uuid
+  status         AllocationStatus @default(ACTIVE)
+
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  endReason String?   @db.VarChar(300)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  messPlan     MessPlan     @relation(fields: [messPlanId], references: [id])
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, status])
+  @@index([messPlanId, status])
+  @@map("mess_subscriptions")
+}
+
+/* ── Phase 8 — fees, payments & expenses ─────────────────────────────────── */
+
+/// Every amount below is an integer count of paise, never a float — the same
+/// rule the platform's own invoices follow. `Int` holds ₹21 crore, far beyond
+/// any single student's fee.
+
+/// Spec §61. A structure is a *template*: assigning it to a student copies its
+/// numbers onto a StudentFee, so later edits to the template never silently
+/// restate what an existing student already owes.
+model FeeStructure {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  /// Null means organization-wide — usable by every branch (spec §61, §77).
+  branchId       String? @db.Uuid
+  courseId       String? @db.Uuid
+  academicYearId String? @db.Uuid
+
+  name        String  @db.VarChar(120)
+  description String? @db.VarChar(600)
+  currency    String  @default("INR") @db.Char(3)
+  /// Cached sum of the components, so a list does not need to aggregate.
+  totalMinor  Int     @default(0)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?         @relation(fields: [branchId], references: [id])
+  course       Course?         @relation(fields: [courseId], references: [id])
+  academicYear AcademicYear?   @relation(fields: [academicYearId], references: [id])
+  components   FeeComponent[]
+  studentFees  StudentFee[]
+
+  @@index([organizationId, branchId, isActive])
+  @@map("fee_structures")
+}
+
+/// A line on a structure — Tuition, Lab, Library. Kept separate from a single
+/// total so a receipt can say what the money was for.
+model FeeComponent {
+  id             String @id @default(uuid()) @db.Uuid
+  feeStructureId String @db.Uuid
+  name           String @db.VarChar(120)
+  amountMinor    Int
+  isOptional     Boolean @default(false)
+  sequence       Int     @default(0)
+
+  feeStructure FeeStructure @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
+
+  @@index([feeStructureId, sequence])
+  @@map("fee_components")
+}
+
+enum StudentFeeStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+/// One student's account against one structure. `netMinor` is what is actually
+/// owed after concessions; `paidMinor` is maintained transactionally alongside
+/// each payment, the same way the platform's `Invoice.amountPaidMinor` is, so
+/// an outstanding-fees query never has to aggregate payments.
+model StudentFee {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  branchId       String @db.Uuid
+  studentId      String @db.Uuid
+  feeStructureId String @db.Uuid
+
+  currency      String @default("INR") @db.Char(3)
+  grossMinor    Int    @default(0)
+  discountMinor Int    @default(0)
+  netMinor      Int    @default(0)
+  paidMinor     Int    @default(0)
+
+  status StudentFeeStatus @default(PENDING)
+
+  assignedAt  DateTime  @default(now())
+  cancelledAt DateTime?
+  note        String?   @db.VarChar(600)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch            @relation(fields: [branchId], references: [id])
+  student      Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  feeStructure FeeStructure      @relation(fields: [feeStructureId], references: [id])
+  installments FeeInstallment[]
+  concessions  FeeConcession[]
+  payments     FeePayment[]
+
+  /// A structure is assigned to a student once; a second term is a second structure.
+  @@unique([studentId, feeStructureId])
+  @@index([organizationId, branchId, status])
+  @@index([studentId])
+  @@map("student_fees")
+}
+
+enum InstallmentStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  WAIVED
+}
+
+/// Spec §61 installments. Payments are allocated oldest-due-first, so a part
+/// payment always clears the most overdue money rather than whichever row was
+/// convenient.
+model FeeInstallment {
+  id           String @id @default(uuid()) @db.Uuid
+  studentFeeId String @db.Uuid
+
+  label       String   @db.VarChar(80)
+  amountMinor Int
+  paidMinor   Int      @default(0)
+  dueDate     DateTime @db.Date
+  sequence    Int      @default(0)
+
+  status InstallmentStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studentFee StudentFee @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
+
+  @@index([studentFeeId, sequence])
+  @@index([dueDate, status])
+  @@map("fee_installments")
+}
+
+/// Spec §61 lists scholarship and discount separately, but mechanically they are
+/// the same act — reduce what is owed — differing only in why and who approved
+/// it. One model with a `kind` keeps the arithmetic in one place while still
+/// reporting scholarships apart from haggled discounts.
+enum ConcessionKind {
+  DISCOUNT
+  SCHOLARSHIP
+  WAIVER
+}
+
+/// Append-only: a concession is reversed by recording a negative one, never by
+/// deletion, so the trail of who reduced a fee and why survives (spec §72).
+model FeeConcession {
+  id           String         @id @default(uuid()) @db.Uuid
+  studentFeeId String         @db.Uuid
+  kind         ConcessionKind @default(DISCOUNT)
+
+  amountMinor Int
+  reason      String @db.VarChar(400)
+
+  grantedById String   @db.Uuid
+  createdAt   DateTime @default(now())
+
+  studentFee StudentFee @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
+  grantedBy  OrgUser    @relation("ConcessionGrantedBy", fields: [grantedById], references: [id])
+
+  @@index([studentFeeId])
+  @@map("fee_concessions")
+}
+
+enum FeePaymentStatus {
+  SUCCEEDED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+/// Spec §62 — every payment identifies organization, branch, student, fee
+/// account, method, amount and date. Never deleted; a mistake is corrected by
+/// a refund row, which is what a receipt book does on paper.
+model FeePayment {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  branchId       String @db.Uuid
+  studentId      String @db.Uuid
+  studentFeeId   String @db.Uuid
+
+  receiptNumber String        @db.VarChar(32)
+  amountMinor   Int
+  refundedMinor Int           @default(0)
+  currency      String        @default("INR") @db.Char(3)
+  method        PaymentMethod
+  status        FeePaymentStatus @default(SUCCEEDED)
+  reference     String?       @db.VarChar(120)
+  note          String?       @db.VarChar(400)
+  paidAt        DateTime      @default(now())
+
+  collectedById String @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  student      Student      @relation(fields: [studentId], references: [id])
+  studentFee   StudentFee   @relation(fields: [studentFeeId], references: [id])
+  collectedBy  OrgUser      @relation("FeeCollectedBy", fields: [collectedById], references: [id])
+  refunds      FeeRefund[]
+
+  /// Receipt numbers are unique per organization, not globally.
+  @@unique([organizationId, receiptNumber])
+  @@index([organizationId, branchId, paidAt])
+  @@index([studentId, paidAt])
+  @@map("fee_payments")
+}
+
+model FeeRefund {
+  id           String @id @default(uuid()) @db.Uuid
+  feePaymentId String @db.Uuid
+
+  amountMinor Int
+  reason      String @db.VarChar(400)
+
+  refundedById String   @db.Uuid
+  createdAt    DateTime @default(now())
+
+  feePayment  FeePayment @relation(fields: [feePaymentId], references: [id], onDelete: Cascade)
+  refundedBy  OrgUser    @relation("FeeRefundedBy", fields: [refundedById], references: [id])
+
+  @@index([feePaymentId])
+  @@map("fee_refunds")
+}
+
+enum ExpenseCategory {
+  RENT
+  SALARY
+  UTILITIES
+  MARKETING
+  MAINTENANCE
+  SUPPLIES
+  TRANSPORT
+  EQUIPMENT
+  OTHER
+}
+
+enum ExpenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
+
+/// Spec §63. A null `branchId` is a central organization cost (head-office
+/// marketing); a set one belongs to that branch. Branch contribution in §64
+/// only nets branch-owned expenses, so central spend is never double-counted
+/// against a single branch.
+model Expense {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  branchId       String? @db.Uuid
+
+  category    ExpenseCategory @default(OTHER)
+  title       String          @db.VarChar(160)
+  description String?         @db.VarChar(600)
+  currency    String          @default("INR") @db.Char(3)
+  amountMinor Int
+  incurredOn  DateTime        @db.Date
+  vendor      String?         @db.VarChar(160)
+  reference   String?         @db.VarChar(120)
+
+  status ExpenseStatus @default(PENDING)
+
+  recordedById String    @db.Uuid
+  approvedById String?   @db.Uuid
+  approvedAt   DateTime?
+  paidAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?      @relation(fields: [branchId], references: [id])
+  recordedBy   OrgUser      @relation("ExpenseRecordedBy", fields: [recordedById], references: [id])
+  approvedBy   OrgUser?     @relation("ExpenseApprovedBy", fields: [approvedById], references: [id])
+
+  @@index([organizationId, branchId, incurredOn])
+  @@index([organizationId, status])
+  @@map("expenses")
+}

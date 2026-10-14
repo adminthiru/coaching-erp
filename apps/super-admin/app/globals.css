@@ -1,0 +1,11 @@
+@import "@acadia/ui/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { -webkit-tap-highlight-color: transparent; }
+  body { @apply bg-bg text-fg font-sans text-body; }
+  *:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+}
