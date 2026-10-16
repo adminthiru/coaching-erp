@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, Checkbox, Combobox, Dropdown,
   ErrorState, PageHeader, Skeleton, Textarea, useToast,
@@ -35,7 +35,7 @@ const ALLOWED: Record<DoubtStatus, DoubtStatus[]> = {
 const ACTION_LABEL: Record<DoubtStatus, string> = { OPEN: 'Reopen', ANSWERED: 'Mark answered', CLOSED: 'Close' };
 
 export default function DoubtDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const id = useSearchParams().get('id') ?? '';
   const router = useRouter();
   const { toast } = useToast();
 

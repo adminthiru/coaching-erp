@@ -100,7 +100,7 @@ export default function HomeworkPage() {
             data={data?.data ?? []}
             getRowId={(r) => r.id}
             loading={loading}
-            onRowClick={(r) => router.push(`/homework/${r.id}`)}
+            onRowClick={(r) => router.push(`/homework/view?id=${r.id}`)}
             toolbar={
               <Segmented
                 options={[
@@ -131,7 +131,7 @@ export default function HomeworkPage() {
         )}
       </div>
 
-      <CreateHomeworkDrawer open={creating} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); router.push(`/homework/${id}`); }} />
+      <CreateHomeworkDrawer open={creating} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); router.push(`/homework/view?id=${id}`); }} />
     </>
   );
 }

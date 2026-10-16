@@ -53,7 +53,7 @@ export default function AuditLogsPage() {
       mobile: 'secondary',
       cell: (r) =>
         r.organization ? (
-          <Link href={`/organizations/${r.organization.id}`} className="text-fg-secondary hover:text-primary">
+          <Link href={`/organizations/view?id=${r.organization.id}`} className="text-fg-secondary hover:text-primary">
             {r.organization.name}
           </Link>
         ) : (

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, Dropdown,
   EmptyState, ErrorState, MetricCard, PageHeader, percent, Progress, Skeleton, StatusBadge, Tabs, useToast,
@@ -43,7 +43,7 @@ interface BatchPerformance {
 }
 
 export default function BatchDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const id = useSearchParams().get('id') ?? '';
   const router = useRouter();
   const { toast } = useToast();
   const { user } = useSession();
@@ -323,7 +323,7 @@ function PerformanceTab({ batchId }: { batchId: string }) {
               <ul className="flex flex-col gap-2">
                 {data.topPerformers.map((p, i) => (
                   <li key={p.student.id} className="flex items-center justify-between gap-3 border-b border-border pb-2 last:border-0">
-                    <Link href={`/students/${p.student.id}`} className="flex min-w-0 items-center gap-2.5 hover:text-primary">
+                    <Link href={`/students/view?id=${p.student.id}`} className="flex min-w-0 items-center gap-2.5 hover:text-primary">
                       <span className="font-mono text-caption text-fg-muted">{i + 1}</span>
                       <span className="flex min-w-0 flex-col">
                         <span className="truncate text-body-sm text-fg">{p.student.name}</span>
@@ -398,7 +398,7 @@ function StudentsTab({ batchId, canManage, onChanged }: { batchId: string; canMa
           <ul className="flex flex-col gap-2">
             {(data?.data ?? []).map((s) => (
               <li key={s.id} className="flex items-center justify-between gap-3 border-b border-border pb-2 last:border-0">
-                <Link href={`/students/${s.id}`} className="flex min-w-0 flex-col hover:text-primary">
+                <Link href={`/students/view?id=${s.id}`} className="flex min-w-0 flex-col hover:text-primary">
                   <span className="truncate text-body-sm text-fg">{s.name}</span>
                   <span className="truncate text-caption text-fg-muted">
                     <span className="font-mono">{s.studentCode}</span>

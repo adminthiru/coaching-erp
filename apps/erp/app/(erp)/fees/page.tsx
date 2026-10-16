@@ -206,7 +206,7 @@ export default function FeesPage() {
             data={accounts.data?.data ?? []}
             getRowId={(r) => r.id}
             loading={accounts.loading}
-            onRowClick={(r) => router.push(`/fees/${r.id}`)}
+            onRowClick={(r) => router.push(`/fees/view?id=${r.id}`)}
             toolbar={
               <div className="flex w-full flex-wrap items-center gap-2.5">
                 <div className="w-full max-w-[280px]">
@@ -268,7 +268,7 @@ export default function FeesPage() {
       <AssignFeeDrawer
         open={assigning}
         onClose={() => setAssigning(false)}
-        onAssigned={(id) => { setAssigning(false); router.push(`/fees/${id}`); }}
+        onAssigned={(id) => { setAssigning(false); router.push(`/fees/view?id=${id}`); }}
       />
       <CreateFeeStructureDrawer
         open={creatingStructure}

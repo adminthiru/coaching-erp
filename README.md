@@ -44,6 +44,25 @@ Seeded sign-ins (override with `SEED_OWNER_EMAIL` / `SEED_OWNER_PASSWORD`):
 All share the password `ChangeMe!2026`. Signing in as both ERP users is the
 quickest way to see branch isolation working.
 
+### Hosting the frontends as static sites
+
+Both frontends build to plain files (`output: 'export'`) and call the API from
+the browser, so any static host serves them — no Node server, no rewrite rules.
+Only the API needs a Node host.
+
+```bash
+NEXT_PUBLIC_API_URL="https://api.example.com" npm run build -w @acadia/erp
+NEXT_PUBLIC_API_URL="https://api.example.com" npm run build -w @acadia/super-admin
+# upload apps/erp/out/ and apps/super-admin/out/ to their hosts
+```
+
+- `NEXT_PUBLIC_API_URL` is baked in at build time; rebuild to point elsewhere.
+- Add the site's origin to the API's `CORS_ORIGINS`, or every request is blocked.
+- Record pages take their id from the query string (`/students/view?id=…`,
+  `/tests/attempt?test=…&id=…`, `/organizations/view?id=…`), never a dynamic segment — a static export
+  cannot prerender ids that only exist in the database.
+- `npm run start -w @acadia/erp` (or `-w @acadia/super-admin`) previews the built `out/` locally.
+
 ## Design system
 
 One design system, used by both frontends. **Add to it — never fork it.**
@@ -236,10 +255,10 @@ The paper, the exam room and the result sheet exist end to end:
 
 - `/questions` — the bank, with duplicate/retire and organization-wide vs
   branch-specific libraries (spec §51).
-- `/tests` and `/tests/[id]` — paper builder (`ManageTestQuestionsDrawer`),
+- `/tests` and `/tests/view?id=…` — paper builder (`ManageTestQuestionsDrawer`),
   status lifecycle (`DRAFT → SCHEDULED → LIVE → CLOSED → RESULTS_PUBLISHED`),
   and a results tab reading the ranked sheet from `tests.service.ts#results`.
-- `/tests/[id]/attempts/[attemptId]` — the exam room a staff member opens after
+- `/tests/attempt?test=…&id=…` — the exam room a staff member opens after
   starting an attempt for a student (`StartAttemptDrawer`). Countdown, debounced
   autosave, and submit all talk to the same server-enforced deadline described
   above; reloading mid-exam resumes cleanly because `GET /attempts/:id` is

@@ -191,7 +191,7 @@ function Section({
           {items.map((i) => (
             <li key={i.id}>
               <Link
-                href={`/organizations/${i.id}`}
+                href={`/organizations/view?id=${i.id}`}
                 className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-surface-secondary"
               >
                 <span className="truncate text-body-sm text-fg">{i.name}</span>

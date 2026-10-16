@@ -6,7 +6,12 @@
  * assertion — the API re-validates it against the user's assignments on every
  * call (spec §76), so a tampered value fails rather than escalating.
  */
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+// `/config.js` (see public/config.js) is read at runtime so a built static site can be
+// pointed at a different API by editing one file on the host, without rebuilding.
+const BASE =
+  (typeof window !== 'undefined' && (window as { ACADIA_API_URL?: string }).ACADIA_API_URL) ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  'http://localhost:4000';
 
 const ACCESS_KEY = 'acadia.erp.access';
 const REFRESH_KEY = 'acadia.erp.refresh';

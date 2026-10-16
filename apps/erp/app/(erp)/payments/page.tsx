@@ -52,7 +52,7 @@ export default function PaymentsPage() {
       header: 'Receipt',
       mobile: 'primary',
       cell: (r) => (
-        <Link href={`/fees/${r.studentFee.id}`} className="flex min-w-0 flex-col hover:text-primary">
+        <Link href={`/fees/view?id=${r.studentFee.id}`} className="flex min-w-0 flex-col hover:text-primary">
           <span className="truncate font-mono font-semibold text-fg">{r.receiptNumber}</span>
           <span className="truncate text-caption text-fg-muted">
             {r.student.name} · <span className="font-mono">{r.student.studentCode}</span>

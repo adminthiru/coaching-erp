@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, Dropdown,
   EmptyState, ErrorState, MetricCard, PageHeader, percent, Skeleton, StatusBadge, Tabs, useToast,
@@ -62,7 +62,7 @@ const TABS = [
 ];
 
 export default function StudentDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const id = useSearchParams().get('id') ?? '';
   const router = useRouter();
   const { toast } = useToast();
   const { user } = useSession();
@@ -207,7 +207,7 @@ export default function StudentDetailPage() {
                 <Field label="Course">{student.course?.name ?? '—'}</Field>
                 <Field label="Current batch">
                   {student.currentBatch ? (
-                    <Link href={`/batches/${student.currentBatch.id}`} className="text-primary hover:underline">
+                    <Link href={`/batches/view?id=${student.currentBatch.id}`} className="text-primary hover:underline">
                       {student.currentBatch.name}
                     </Link>
                   ) : '—'}
@@ -241,7 +241,7 @@ export default function StudentDetailPage() {
                   {student.batches.map((b) => (
                     <li key={b.id} className="flex items-center justify-between gap-3 border-b border-border pb-2 last:border-0">
                       <span className="flex min-w-0 flex-col">
-                        <Link href={`/batches/${b.batch.id}`} className="truncate text-body-sm text-fg hover:text-primary">
+                        <Link href={`/batches/view?id=${b.batch.id}`} className="truncate text-body-sm text-fg hover:text-primary">
                           {b.batch.name}
                         </Link>
                         <span className="text-caption text-fg-muted">
@@ -459,7 +459,7 @@ function PerformanceTab({ studentId }: { studentId: string }) {
           <ul className="flex flex-col gap-2.5">
             {data.timeline.map((t) => (
               <li key={t.testId} className="flex items-start justify-between gap-3 border-b border-border pb-2.5 last:border-0">
-                <Link href={`/tests/${t.testId}`} className="flex min-w-0 flex-col hover:text-primary">
+                <Link href={`/tests/view?id=${t.testId}`} className="flex min-w-0 flex-col hover:text-primary">
                   <span className="truncate text-body-sm text-fg">{t.title}</span>
                   <span className="truncate text-caption text-fg-muted">
                     <span className="font-mono">{t.code}</span> · {t.date.slice(0, 10)} · {t.correctCount} correct / {t.wrongCount} wrong / {t.unattemptedCount} skipped

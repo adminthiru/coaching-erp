@@ -110,7 +110,7 @@ export default function BatchesPage() {
             data={data?.data ?? []}
             getRowId={(r) => r.id}
             loading={loading}
-            onRowClick={(r) => router.push(`/batches/${r.id}`)}
+            onRowClick={(r) => router.push(`/batches/view?id=${r.id}`)}
             toolbar={
               <div className="flex w-full flex-wrap items-center gap-2.5">
                 <div className="w-full max-w-[260px]">

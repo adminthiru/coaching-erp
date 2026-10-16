@@ -115,7 +115,9 @@ export default function ErpLayout({ children }: { children: React.ReactNode }) {
         </Button>
       }
     >
-      {children}
+      {/* Detail pages read their record id from the query string, and a static
+          export needs a Suspense boundary above every useSearchParams call. */}
+      <React.Suspense fallback={null}>{children}</React.Suspense>
     </AppShell>
   );
 }

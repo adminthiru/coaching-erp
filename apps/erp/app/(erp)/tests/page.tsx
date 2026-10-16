@@ -123,7 +123,7 @@ export default function TestsPage() {
             data={data?.data ?? []}
             getRowId={(r) => r.id}
             loading={loading}
-            onRowClick={(r) => router.push(`/tests/${r.id}`)}
+            onRowClick={(r) => router.push(`/tests/view?id=${r.id}`)}
             toolbar={
               <div className="flex w-full flex-wrap items-center gap-2.5">
                 <div className="w-full max-w-[280px]">
@@ -164,7 +164,7 @@ export default function TestsPage() {
         )}
       </div>
 
-      <CreateTestDrawer open={creating} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); router.push(`/tests/${id}`); }} />
+      <CreateTestDrawer open={creating} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); router.push(`/tests/view?id=${id}`); }} />
     </>
   );
 }

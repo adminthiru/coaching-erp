@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
-    "start": "next start --port 3000",
+    "start": "npx --yes serve@14.2.4 out -l 3000",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

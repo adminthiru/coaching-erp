@@ -108,7 +108,7 @@ export default function BranchesPage() {
             data={data?.data ?? []}
             getRowId={(r) => r.id}
             loading={loading}
-            onRowClick={(r) => router.push(`/branches/${r.id}`)}
+            onRowClick={(r) => router.push(`/branches/view?id=${r.id}`)}
             toolbar={
               <div className="w-full max-w-[300px]">
                 <SearchInput
@@ -125,7 +125,7 @@ export default function BranchesPage() {
                       heading={row.name}
                       trigger={<Button size="sm" variant="ghost" iconOnly aria-label={`Actions for ${row.name}`}>⋯</Button>}
                       items={[
-                        { label: 'View branch', onSelect: () => router.push(`/branches/${row.id}`) },
+                        { label: 'View branch', onSelect: () => router.push(`/branches/view?id=${row.id}`) },
                         { label: 'Edit branch', onSelect: () => setEditing(row) },
                         ...(row.needsAdmin && row.status !== 'ARCHIVED'
                           ? [{ label: 'Add branch admin', onSelect: () => setAddingAdminTo(row) }]

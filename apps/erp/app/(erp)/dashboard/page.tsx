@@ -43,7 +43,7 @@ export default function DashboardPage() {
       header: 'Branch',
       mobile: 'primary',
       cell: (r) => (
-        <Link href={`/branches/${r.id}`} className="flex min-w-0 flex-col hover:text-primary">
+        <Link href={`/branches/view?id=${r.id}`} className="flex min-w-0 flex-col hover:text-primary">
           <span className="truncate text-body-sm text-fg">{r.name}</span>
           <span className="truncate text-caption text-fg-muted"><span className="font-mono">{r.code}</span> · {r.city}</span>
         </Link>
@@ -208,7 +208,7 @@ export default function DashboardPage() {
                 <ul className="flex flex-col gap-2">
                   {data.branches.map((b) => (
                     <li key={b.id} className="flex items-center justify-between gap-3 border-b border-border pb-2 last:border-0">
-                      <Link href={`/branches/${b.id}`} className="flex min-w-0 flex-col hover:text-primary">
+                      <Link href={`/branches/view?id=${b.id}`} className="flex min-w-0 flex-col hover:text-primary">
                         <span className="truncate text-body-sm text-fg">{b.name}</span>
                         <span className="text-caption text-fg-muted">
                           <span className="font-mono">{b.code}</span> · {b.city}

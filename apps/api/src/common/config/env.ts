@@ -35,7 +35,8 @@ let cached: Env | null = null;
 
 export function loadEnv(): Env {
   if (cached) return cached;
-  const parsed = envSchema.safeParse(process.env);
+  // Most hosts (Render, Railway, Heroku…) assign the port via PORT, not API_PORT.
+  const parsed = envSchema.safeParse({ ...process.env, API_PORT: process.env.API_PORT ?? process.env.PORT });
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`);
     throw new Error(`Invalid environment configuration:\n${lines.join('\n')}`);

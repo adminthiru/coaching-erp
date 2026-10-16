@@ -243,7 +243,7 @@ export default function AdmissionsPage() {
                       trigger={<Button size="sm" variant="ghost" iconOnly aria-label={`Actions for ${row.studentName}`}>⋯</Button>}
                       items={
                         row.stage === 'ADMITTED'
-                          ? [{ label: 'View student', onSelect: () => { window.location.href = `/students/${row.convertedStudent?.id}`; } }]
+                          ? [{ label: 'View student', onSelect: () => { window.location.href = `/students/view?id=${row.convertedStudent?.id}`; } }]
                           : [
                               { label: 'Edit enquiry', onSelect: () => setEditing(row) },
                         { label: 'Move stage', onSelect: () => setMoving(row) },

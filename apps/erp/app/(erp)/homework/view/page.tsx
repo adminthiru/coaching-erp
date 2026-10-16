@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, DataTable, Dropdown,
   EmptyState, ErrorState, PageHeader, Skeleton, useToast, type Column,
@@ -42,7 +42,7 @@ const ALLOWED: Record<HomeworkStatus, HomeworkStatus[]> = { DRAFT: ['PUBLISHED']
 const ACTION_LABEL: Record<HomeworkStatus, string> = { DRAFT: 'Move to draft', PUBLISHED: 'Publish', CLOSED: 'Close' };
 
 export default function HomeworkDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const id = useSearchParams().get('id') ?? '';
   const router = useRouter();
   const { toast } = useToast();
   const { user } = useSession();

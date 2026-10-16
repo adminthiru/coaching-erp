@@ -74,7 +74,7 @@ export default function OrganizationsPage() {
       mobile: 'primary',
       cell: (r) => (
         <div className="flex min-w-0 flex-col">
-          <Link href={`/organizations/${r.id}`} className="truncate font-semibold text-fg hover:text-primary">
+          <Link href={`/organizations/view?id=${r.id}`} className="truncate font-semibold text-fg hover:text-primary">
             {r.name}
           </Link>
           <span className="truncate text-caption text-fg-muted">{r.ownerEmail}</span>
@@ -135,7 +135,7 @@ export default function OrganizationsPage() {
             loading={loading}
             sort={sort}
             onSortChange={setSort}
-            onRowClick={(r) => router.push(`/organizations/${r.id}`)}
+            onRowClick={(r) => router.push(`/organizations/view?id=${r.id}`)}
             toolbar={
               <div className="flex w-full flex-wrap items-center gap-2.5">
                 <div className="w-full max-w-[280px]">
@@ -163,9 +163,9 @@ export default function OrganizationsPage() {
                   </Button>
                 }
                 items={[
-                  { label: 'View details', onSelect: () => router.push(`/organizations/${row.id}`) },
-                  { label: 'Usage & limits', onSelect: () => router.push(`/organizations/${row.id}?tab=usage`) },
-                  { label: 'Billing', onSelect: () => router.push(`/organizations/${row.id}?tab=billing`) },
+                  { label: 'View details', onSelect: () => router.push(`/organizations/view?id=${row.id}`) },
+                  { label: 'Usage & limits', onSelect: () => router.push(`/organizations/view?id=${row.id}&tab=usage`) },
+                  { label: 'Billing', onSelect: () => router.push(`/organizations/view?id=${row.id}&tab=billing`) },
                 ]}
               />
             )}
@@ -197,7 +197,7 @@ export default function OrganizationsPage() {
       <CreateOrganizationDrawer
         open={creating}
         onClose={() => setCreating(false)}
-        onCreated={(id) => { setCreating(false); router.push(`/organizations/${id}`); }}
+        onCreated={(id) => { setCreating(false); router.push(`/organizations/view?id=${id}`); }}
       />
     </>
   );

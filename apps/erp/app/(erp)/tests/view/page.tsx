@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, DataTable, Dropdown,
   EmptyState, ErrorState, MetricCard, PageHeader, Skeleton, Tabs, useToast, type Column,
@@ -90,7 +90,7 @@ const ATTEMPT_VARIANT: Record<AttemptStatus, 'neutral' | 'info' | 'warning' | 's
 };
 
 export default function TestDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const id = useSearchParams().get('id') ?? '';
   const router = useRouter();
   const { toast } = useToast();
   const { user } = useSession();
@@ -266,7 +266,7 @@ export default function TestDetailPage() {
         testId={test.id}
         batches={test.batches}
         onClose={() => setStartingAttempt(false)}
-        onStarted={(attemptId) => { setStartingAttempt(false); router.push(`/tests/${test.id}/attempts/${attemptId}`); }}
+        onStarted={(attemptId) => { setStartingAttempt(false); router.push(`/tests/attempt?test=${test.id}&id=${attemptId}`); }}
       />
 
       <RecordOfflineScoresDrawer

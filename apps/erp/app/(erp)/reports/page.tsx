@@ -132,7 +132,7 @@ export default function ReportsPage() {
                   <ul className="flex flex-col gap-2.5">
                     {data.trend.map((t) => (
                       <li key={t.testId} className="flex items-center gap-3">
-                        <Link href={`/tests/${t.testId}`} className="flex min-w-0 flex-1 flex-col hover:text-primary">
+                        <Link href={`/tests/view?id=${t.testId}`} className="flex min-w-0 flex-1 flex-col hover:text-primary">
                           <span className="truncate text-body-sm text-fg">{t.title}</span>
                           <span className="truncate text-caption text-fg-muted">
                             <span className="font-mono">{t.code}</span> · {t.date.slice(0, 10)} · {t.attemptsCount} attempt{t.attemptsCount === 1 ? '' : 's'}

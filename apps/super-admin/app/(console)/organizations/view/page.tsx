@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, Dropdown,
   ErrorState, PageHeader, Skeleton, StatusBadge, Tabs, UsageMeter, useToast,
@@ -59,9 +59,9 @@ const TABS = [
 ];
 
 export default function OrganizationDetailPage() {
-  const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const id = searchParams.get('id') ?? '';
   const { toast } = useToast();
 
   const [tab, setTab] = React.useState(searchParams.get('tab') ?? 'overview');

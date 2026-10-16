@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, Dropdown, ErrorState,
   PageHeader, Progress, Skeleton, useToast,
@@ -45,7 +45,7 @@ const INSTALLMENT_VARIANT: Record<InstallmentStatus, 'neutral' | 'warning' | 'su
 };
 
 export default function FeeDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const id = useSearchParams().get('id') ?? '';
   const router = useRouter();
   const { user } = useSession();
 
@@ -98,7 +98,7 @@ export default function FeeDetailPage() {
                   trigger={<Button variant="outline">Actions</Button>}
                   items={[
                     { label: 'Apply concession…', onSelect: () => setGranting(true) },
-                    { label: 'View student', onSelect: () => router.push(`/students/${fee.student.id}`) },
+                    { label: 'View student', onSelect: () => router.push(`/students/view?id=${fee.student.id}`) },
                   ]}
                 />
               </>

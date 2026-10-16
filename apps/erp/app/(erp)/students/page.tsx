@@ -132,7 +132,7 @@ export default function StudentsPage() {
             loading={loading}
             sort={sort}
             onSortChange={setSort}
-            onRowClick={(r) => router.push(`/students/${r.id}`)}
+            onRowClick={(r) => router.push(`/students/view?id=${r.id}`)}
             toolbar={
               <div className="flex w-full flex-wrap items-center gap-2.5">
                 <div className="w-full max-w-[280px]">
@@ -150,7 +150,7 @@ export default function StudentsPage() {
                 heading={row.name}
                 trigger={<Button size="sm" variant="ghost" iconOnly aria-label={`Actions for ${row.name}`}>⋯</Button>}
                 items={[
-                  { label: 'View student', onSelect: () => router.push(`/students/${row.id}`) },
+                  { label: 'View student', onSelect: () => router.push(`/students/view?id=${row.id}`) },
                   { label: 'Edit student', onSelect: () => setEditing(row) },
                   { label: 'Transfer branch', onSelect: () => setTransferring(row) },
                 ]}

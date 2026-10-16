@@ -94,7 +94,7 @@ export default function DoubtsPage() {
             data={data?.data ?? []}
             getRowId={(r) => r.id}
             loading={loading}
-            onRowClick={(r) => router.push(`/doubts/${r.id}`)}
+            onRowClick={(r) => router.push(`/doubts/view?id=${r.id}`)}
             toolbar={
               <Segmented
                 options={[
@@ -125,7 +125,7 @@ export default function DoubtsPage() {
         )}
       </div>
 
-      <CreateDoubtDrawer open={creating} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); router.push(`/doubts/${id}`); }} />
+      <CreateDoubtDrawer open={creating} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); router.push(`/doubts/view?id=${id}`); }} />
     </>
   );
 }

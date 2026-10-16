@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Alert, Badge, Button, Card, CardContent, Checkbox, ConfirmDialog, ErrorState, Input, Progress,
   RadioGroup, Skeleton, useToast,
@@ -55,7 +55,9 @@ const empty = (): Answer => ({ selectedOptionIds: [], numericAnswer: null });
  * next submit attempt corrects it.
  */
 export default function AttemptPage() {
-  const { id: testId, attemptId } = useParams<{ id: string; attemptId: string }>();
+  const params = useSearchParams();
+  const testId = params.get('test') ?? '';
+  const attemptId = params.get('id') ?? '';
   const router = useRouter();
   const { toast } = useToast();
 
@@ -87,7 +89,7 @@ export default function AttemptPage() {
       } catch (err) {
         if (err instanceof ApiError && err.code === 'ALREADY_SUBMITTED') {
           toast({ kind: 'info', title: 'Already submitted', description: 'This attempt was already closed.' });
-          router.push(`/tests/${testId}`);
+          router.push(`/tests/view?id=${testId}`);
         } else {
           toast({ kind: 'error', title: 'Could not submit', description: err instanceof ApiError ? err.message : 'Something went wrong.' });
         }
@@ -137,7 +139,7 @@ export default function AttemptPage() {
         <ErrorState
           kind={error instanceof ApiError && error.status === 403 ? 'forbidden' : 'not-found'}
           description={error.message}
-          action={<Button variant="outline" onClick={() => router.push(`/tests/${testId}`)}>Back to test</Button>}
+          action={<Button variant="outline" onClick={() => router.push(`/tests/view?id=${testId}`)}>Back to test</Button>}
         />
       </div>
     );
@@ -168,7 +170,7 @@ export default function AttemptPage() {
             <p className="text-caption text-fg-muted">
               Ranks and percentile appear once results for {data.test.title} are published.
             </p>
-            <Button onClick={() => router.push(`/tests/${testId}`)}>Back to test</Button>
+            <Button onClick={() => router.push(`/tests/view?id=${testId}`)}>Back to test</Button>
           </CardContent>
         </Card>
       </div>
@@ -183,7 +185,7 @@ export default function AttemptPage() {
           {data.attempt.status === 'AUTO_SUBMITTED' ? 'ran out of time and was submitted automatically' : 'already submitted this attempt'}
           {data.attempt.submittedAt && ` on ${new Date(data.attempt.submittedAt).toLocaleString()}`}.
         </Alert>
-        <Button variant="outline" onClick={() => router.push(`/tests/${testId}`)}>Back to test</Button>
+        <Button variant="outline" onClick={() => router.push(`/tests/view?id=${testId}`)}>Back to test</Button>
       </div>
     );
   }

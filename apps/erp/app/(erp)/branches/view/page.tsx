@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, Dropdown,
   ErrorState, PageHeader, Skeleton, StatusBadge, Tabs, useToast,
@@ -39,7 +39,7 @@ const TABS = [
 ];
 
 export default function BranchDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const id = useSearchParams().get('id') ?? '';
   const router = useRouter();
   const { toast } = useToast();
   const { user, reload: reloadSession } = useSession();
