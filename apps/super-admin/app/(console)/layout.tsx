@@ -21,7 +21,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
     <AppShell
       groups={SUPER_ADMIN_NAV}
       activeHref={pathname}
-      workspace={{ name: 'Acadia Platform', subtitle: 'Super Admin', initial: 'A' }}
+      workspace={{ name: 'Platform Console', subtitle: 'Super Admin', initial: 'P' }}
       user={{ name: user.name, role: PLATFORM_ROLE_LABEL[user.role as PlatformRole] ?? user.role }}
       renderLink={({ href, children: linkChildren, ...rest }) => (
         <Link href={href} {...rest}>{linkChildren}</Link>

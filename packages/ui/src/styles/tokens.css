@@ -1,4 +1,4 @@
-/* Acadia UI design tokens — Cobalt.
+/* Campus Engine UI design tokens — brand blue #1A56E8.
    Every component reads these roles. Never reference a hex directly. */
 
 :root,
@@ -15,9 +15,9 @@
   --text-muted: #8A94A6;
   --text-disabled: #B4BBC6;
 
-  --primary: #1D6AB8;
-  --primary-hover: #17579A;
-  --primary-soft: #E8F1FA;
+  --primary: #1A56E8;
+  --primary-hover: #1546C2;
+  --primary-soft: #EBF1FE;
   --primary-fg: #FFFFFF;
 
   --success: #0F7B57;  --success-soft: #E6F5EF;
@@ -25,7 +25,10 @@
   --error:   #B42318;  --error-soft:   #FDECEA;
   --info:    #0B6BA8;  --info-soft:    #E8F2FA;
 
-  --ring: rgba(29, 106, 184, .22);
+  /* Logo ink — the monogram's deep navy, for brand surfaces. */
+  --brand-ink: #10233F;
+
+  --ring: rgba(26, 86, 232, .22);
 
   --shadow-soft: 0 1px 2px rgba(16, 24, 40, .05);
   --shadow-medium: 0 2px 6px -1px rgba(16, 24, 40, .08), 0 1px 2px rgba(16, 24, 40, .04);
@@ -45,17 +48,19 @@
   --text-muted: #7A8494;
   --text-disabled: #4C545F;
 
-  --primary: #63AAE8;
-  --primary-hover: #7CBAF0;
-  --primary-soft: #122536;
-  --primary-fg: #08121B;
+  --primary: #5C8DF6;
+  --primary-hover: #7BA4F8;
+  --primary-soft: #0F1C3A;
+  --primary-fg: #06102A;
 
   --success: #34C08A;  --success-soft: #10281F;
   --warning: #E0A855;  --warning-soft: #2A2113;
   --error:   #F0736A;  --error-soft:   #2C1614;
   --info:    #5CB0E8;  --info-soft:    #10222E;
 
-  --ring: rgba(99, 170, 232, .28);
+  --brand-ink: #E6ECF7;
+
+  --ring: rgba(92, 141, 246, .30);
 
   --shadow-soft: 0 1px 2px rgba(0, 0, 0, .45);
   --shadow-medium: 0 2px 8px -1px rgba(0, 0, 0, .5);

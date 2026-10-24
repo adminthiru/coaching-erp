@@ -1,5 +1,5 @@
 /**
- * Acadia UI — the single source of visual truth for the platform.
+ * Campus Engine UI — the single source of visual truth for the platform.
  *
  * Rules (enforced by review, not by the compiler):
  *  - Never hardcode a hex. Use bg-surface / text-fg-muted / border-border-strong.
@@ -41,6 +41,9 @@ export * from "./components/ui/date-range";
 
 // forms
 export * from "./components/forms/form";
+
+// brand
+export * from "./components/brand/brand";
 
 // layout
 export * from "./components/layout/sidebar";

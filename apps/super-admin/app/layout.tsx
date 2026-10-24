@@ -5,8 +5,8 @@ import { AuthProvider } from '@/lib/auth';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Acadia — Platform Console',
-  description: 'Super Admin console for the Acadia coaching centre SaaS platform.',
+  title: 'Campus Engine — Platform Console',
+  description: 'Super Admin console for the Campus Engine (Coaching) SaaS platform.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

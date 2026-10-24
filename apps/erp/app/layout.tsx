@@ -5,7 +5,7 @@ import { SessionProvider } from '@/lib/session';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Acadia ERP',
+  title: 'Campus Engine (Coaching)',
   description: 'Coaching centre operations across every branch.',
 };
 

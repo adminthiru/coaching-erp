@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss";
 
 /**
- * Acadia UI Tailwind preset — Cobalt.
+ * Campus Engine UI Tailwind preset.
  *
  * Apps consume this via `presets: [acadiaPreset]` and supply their own `content`.
  * Every colour here resolves to a CSS variable defined in `src/styles/tokens.css`,
@@ -32,6 +32,7 @@ const preset: Omit<Config, "content"> = {
         warning: { DEFAULT: "var(--warning)", soft: "var(--warning-soft)" },
         error: { DEFAULT: "var(--error)", soft: "var(--error-soft)" },
         info: { DEFAULT: "var(--info)", soft: "var(--info-soft)" },
+        "brand-ink": "var(--brand-ink)",
       },
       borderRadius: { sm: "8px", md: "10px", lg: "14px", xl: "18px" },
       boxShadow: {

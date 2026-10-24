@@ -18,7 +18,7 @@ const addDays = (d: Date, n: number) => new Date(d.getTime() + n * day);
 
 const PLANS: Array<Prisma.PlanCreateInput & { slug: string }> = [
   {
-    name: 'Free', slug: 'free', description: 'Evaluate Acadia with a single branch.',
+    name: 'Free', slug: 'free', description: 'Evaluate Campus Engine with a single branch.',
     monthlyPriceMinor: 0, annualPriceMinor: 0, trialDays: 0, status: 'ACTIVE', sortOrder: 0,
     features: ['students', 'attendance', 'fees'],
     limits: { students: 50, branches: 1, faculty: 5, admin_users: 2, storage_mb: 512, messages: 100, tests: 10, questions: 200 },

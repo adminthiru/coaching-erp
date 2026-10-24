@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "../../lib/cn";
+import { BrandLogo } from "../brand/brand";
 import {
   BuildingIcon, CalendarIcon, CardIcon, ChartIcon, CheckSquareIcon, DashboardIcon, FileIcon,
   FlagIcon, LayersIcon, LifebuoyIcon, ReceiptIcon, SettingsIcon, ShieldIcon, TagIcon, UsersIcon,
@@ -65,7 +66,7 @@ export function isNavActive(href: string, current: string) {
 }
 
 /**
- * The application rail, matching the Acadia UI app-shell reference exactly:
+ * The application rail, matching the Campus Engine UI app-shell reference exactly:
  * a `--surface-2` rail at 226px, 16px/12px padding, 7px/10px nav rows on a 10px
  * radius, the active row filled `--primary`, and hover lifting a row onto
  * `--surface`. The workspace and user chips are 9px-radius cards on `--surface`.
@@ -87,6 +88,10 @@ export function Sidebar({
         className
       )}
     >
+      <div className={cn("flex items-center px-1.5 pt-0.5", collapsed && "justify-center px-0")}>
+        <BrandLogo size="sm" markOnly={collapsed} />
+      </div>
+
       {workspaceSlot ?? (
         <WorkspaceChip
           workspace={workspace}

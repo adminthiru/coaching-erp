@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Alert, Button, Card, Input } from '@acadia/ui';
+import { Alert, BrandLogo, Button, Card, Input } from '@acadia/ui';
 import { ApiError, login } from '@/lib/api';
 import { useSession } from '@/lib/session';
 
@@ -44,12 +44,10 @@ export default function LoginPage() {
   return (
     <main className="grid min-h-screen place-items-center bg-bg px-5 py-10">
       <div className="flex w-full max-w-[400px] flex-col gap-5">
-        <div className="flex flex-col items-center gap-2.5 text-center">
-          <span className="grid size-11 place-items-center rounded-lg bg-primary text-h3 font-bold text-primary-fg" aria-hidden>
-            A
-          </span>
+        <div className="flex flex-col items-center gap-11 text-center">
+          <BrandLogo size="lg" />
           <div className="flex flex-col gap-1">
-            <h1 className="text-h2 text-fg">Sign in to Acadia</h1>
+            <h1 className="text-h2 text-fg">Sign in to your centre</h1>
             <p className="text-body-sm text-fg-secondary">Manage your coaching centre across every branch.</p>
           </div>
         </div>

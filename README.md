@@ -1,4 +1,4 @@
-# Acadia — NEET & JEE Coaching Centre SaaS ERP
+# Campus Engine (Coaching) — NEET & JEE Coaching Centre SaaS ERP
 
 Multi-tenant, multi-branch SaaS platform for competitive-exam coaching centres.
 Built phase by phase against the specification in
@@ -12,7 +12,7 @@ apps/
 ├── super-admin/   Next.js 15 — Platform Super Admin Console  (port 3001)
 └── erp/           Next.js 15 — tenant-facing ERP             (Phase 1)
 packages/
-├── ui/            Acadia UI — Cobalt design system, Plus Jakarta Sans
+├── ui/            Campus Engine UI — brand-blue (#1A56E8) design system, Plus Jakarta Sans
 ├── types/         shared domain enums, mirrored by Prisma
 ├── validation/    Zod schemas shared by API and browser
 ├── utils/         money, dates, quotas — framework-free

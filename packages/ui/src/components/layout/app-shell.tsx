@@ -4,6 +4,7 @@ import * as React from "react";
 import { Sidebar, type NavGroup, type LinkRenderer } from "./sidebar";
 import { Drawer } from "../ui/drawer";
 import { Button } from "../ui/button";
+import { BrandMark } from "../brand/brand";
 
 export interface AppShellProps {
   groups: NavGroup[];
@@ -52,6 +53,7 @@ export function AppShell({
               <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />
             </svg>
           </Button>
+          <BrandMark size={20} />
           <span className="truncate text-label text-fg">{workspace.name}</span>
         </div>
         <main className="flex-1 pb-16">{children}</main>
